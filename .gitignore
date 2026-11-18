@@ -1,0 +1,7 @@
+# Build output (the installer is attached to GitHub releases instead)
+obj/
+dist/
+
+# Design scratch work and posts about the project
+design/
+promo/
