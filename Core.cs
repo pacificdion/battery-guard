@@ -573,6 +573,16 @@ namespace BatteryGuard
         double sessionStartPct = -1, sessionInMwh;
         string lastCharge = "", lastChargeState = "";
         string protection = "", lastProfileError;
+
+        // Learning the battery: automatically on a new PC (down to the safety limit), or with
+        // "Learn my battery" in Settings (until the battery itself gives out, to find its true limit).
+        //   charge -> drain -> recharge -> done
+        const int AbsoluteMinMv = 3000;     // lowest a lithium cell should ever go, under load
+        string learnState = "", learnMode = "", learnSummary = "";
+        int learnSeq, cutoffMv, absoluteReads, pendingCutoffMv;
+        double learnRunMin = -1, learnPointAccum;
+        bool learnWarned;
+        string LearnRunPath { get { return Path.Combine(Paths.Data, "learn-run.csv"); } }
         bool? profileArmed;
         bool hibernateRequested;
 
@@ -636,7 +646,9 @@ namespace BatteryGuard
             int design = reader.DesignMwh(), full = reader.FullMwh();
             if (full > 0) fullMwh = full;
             gauge.Load(Ini.Read(GaugePath));
-            if (gauge.Fresh) gauge.SeedCapacity(design); // first run on this PC
+            bool firstRun = gauge.Fresh;
+            if (firstRun) gauge.SeedCapacity(design); // first run on this PC
+            if (pendingCutoffMv > 0) FinishTrueLimit(pendingCutoffMv, true); // the learning run ended as it should: the battery gave out
             floorMv = Math.Max(cfg.FloorPerCellMv, learnedFloorMv);
             Event(string.Format("Core started{0} (version {9}). Battery {1} mV, {2} mW via {3}, {4} cells, design {5} mWh, {6}, Windows gauge {7}%, hibernate floor {8} mV/cell.",
                 cfg.DryRun == 1 ? " [TEST MODE]" : "", r.VoltageMv, r.RateMw == int.MinValue ? "?" : r.RateMw.ToString(CultureInfo.InvariantCulture),
@@ -647,6 +659,8 @@ namespace BatteryGuard
                 Event(canSleepDeep
                     ? "Hibernation is turned off on this PC, so at the safety limit it will shut down instead. To turn it on again, run as administrator: powercfg /hibernate on"
                     : "This PC can't hibernate, so at the safety limit it will shut down instead.");
+            // A new PC learns its battery's real range first: full, then until it gives out.
+            if (firstRun && learnState == "") StartLearning("cutoff");
             WatchInbox();
 
             Archive.Recover();
@@ -666,6 +680,12 @@ namespace BatteryGuard
                 attachPct = stopPct = -1;
                 attachInMwh = 0;
                 captured = false;
+                if (learnState == "drain" && learnRunMin >= 0)
+                {
+                    // It was switched off or restarted in the middle of a learning run (not by the battery).
+                    Event(string.Format(CultureInfo.InvariantCulture, "Learning run stopped after {0:0} min: the laptop was off. It starts again the next time it's unplugged.", learnRunMin));
+                    learnRunMin = -1;
+                }
             }
             if (!PowerEvents.Subscribe(OnPowerEvent)) Event("Couldn't subscribe to instant power notifications; relying on regular readings.");
 
@@ -803,6 +823,7 @@ namespace BatteryGuard
             });
             NoteGaugeEvent();
             TrackCharging(onAC, acChanged, slept, awakeSec);
+            TrackLearning(onAC, awakeSec);
             TrackSessions(onAC, awakeSec);
 
             string prot = cfg.Enabled != 1 ? "Off" : failedReads >= 3 || cells <= 0 ? "Fallback" : "Active";
@@ -829,11 +850,12 @@ namespace BatteryGuard
             // Every reading is kept. Most wait in memory for up to a minute and are written
             // together (one disk write instead of six); anything that happened, a low battery
             // and the countdown go to disk at once.
-            bool urgent = forceHistory || phase != "Normal" || (!onAC && (gauge.Percent < 15 || perCell <= floorMv + 100));
+            bool trueLimitRun = !onAC && learnState == "drain" && learnMode == "cutoff";
+            bool urgent = forceHistory || phase != "Normal" || trueLimitRun || (!onAC && (gauge.Percent < 15 || perCell <= floorMv + 100));
             if (forceHistory || historyAccum >= (idleOnAC ? 60 : 0)) { WriteHistory(urgent); historyAccum = 0; forceHistory = false; }
 
             stateAccum += awakeSec;
-            if (stateAccum >= (onAC ? 300 : gauge.Percent < 15 ? 10 : 60))
+            if (stateAccum >= (onAC ? 300 : gauge.Percent < 15 || trueLimitRun ? 10 : 60))
             {
                 lastOnBattery = !onAC;
                 if (!onAC && rawMv > 0 && cells > 0) lastPerCellMv = rawMv / cells;
@@ -949,7 +971,15 @@ namespace BatteryGuard
         void UpdatePhase()
         {
             int rawPerCell = rawMv / cells;
-            criticalReads = rawMv > 0 && rawPerCell <= floorMv - 150 ? criticalReads + 1 : 0;
+            if (learnState == "drain" && learnMode == "cutoff")
+            {
+                TrueLimitRun(rawPerCell);
+                return;
+            }
+            // Far below the limit (a sudden collapse under load): hibernate within seconds. Once the
+            // battery's true cut-out point is known, that point sets how far below is too far.
+            int emergencyMv = cutoffMv > 0 ? Math.Max(floorMv - 150, (floorMv + cutoffMv) / 2) : floorMv - 150;
+            criticalReads = rawMv > 0 && rawPerCell <= emergencyMv ? criticalReads + 1 : 0;
             double left = (countdownEndUtc - DateTime.UtcNow).TotalSeconds;
             if (criticalReads >= 2 && (phase != "Countdown" || (!emergency && left > 10)))
             {
@@ -969,7 +999,9 @@ namespace BatteryGuard
             // Both the countdown and the warning need it to hold for two readings, so a brief
             // voltage dip under a burst of load doesn't set them off.
             double minutesLeft = gauge.WarnMinutesLeft;
-            bool soon = minutesLeft >= 0 && minutesLeft * 60 <= cfg.CountdownSeconds;
+            // Until this battery has been learned, its "time left" is only an estimate: then the
+            // countdown starts only when the voltage itself reaches the limit, never early.
+            bool soon = gauge.Calibrated && minutesLeft >= 0 && minutesLeft * 60 <= cfg.CountdownSeconds;
             bool low = minutesLeft >= 0 && minutesLeft <= cfg.WarnMinutes;
             lowReads = soon || low ? lowReads + 1 : 0;
             if (soon && lowReads >= 2)
@@ -994,16 +1026,56 @@ namespace BatteryGuard
 
         void StartCountdown(int seconds, bool isEmergency, string why)
         {
+            StartCountdown(seconds, isEmergency, why, true);
+        }
+
+        void StartCountdown(int seconds, bool isEmergency, string why, bool teachGauge)
+        {
             phase = "Countdown";
             countdownSeq++;
             emergency = isEmergency;
             countdownEndUtc = DateTime.UtcNow.AddSeconds(seconds);
             message = why;
             Event(string.Format(CultureInfo.InvariantCulture, "Countdown {0} s: {1} ({2:0.000} V/cell, gauge said {3:0}%)", seconds, why, perCell / 1000, gauge.Percent));
+            if (!teachGauge) return;
             // The battery is (about) empty: a known point the gauge learns from.
             gauge.ReachedFloor(floorMv, isEmergency || perCell <= floorMv ? 0 : Math.Max(0, gauge.WarnMinutesLeft));
             NoteGaugeEvent();
             SaveGauge();
+            // First-use learning (to the safety limit) is done once a run down to it has been learned.
+            if ((learnState == "charge" || learnState == "drain") && learnMode == "safe" && gauge.LastRunLearned)
+            {
+                learnState = "recharge";
+                learnSeq++;
+                Event("Learning: the run down to the safety limit is learned. Last step: charge to 100%.");
+                SaveState();
+            }
+        }
+
+        // "Learn my battery": keeps going until the battery itself gives out, to find its true limit.
+        // Battery Guard doesn't hibernate - except below the lowest voltage a lithium cell should
+        // ever reach, where the run ends there instead.
+        void TrueLimitRun(int rawPerCell)
+        {
+            if (phase == "Countdown") return;
+            absoluteReads = rawMv > 0 && rawPerCell <= AbsoluteMinMv ? absoluteReads + 1 : 0;
+            if (absoluteReads >= 2)
+            {
+                FinishTrueLimit(AbsoluteMinMv, false);
+                StartCountdown(10, true, string.Format(CultureInfo.InvariantCulture,
+                    "The battery reached {0:0.00} V per cell, the lowest a lithium cell should go: learning stops here.", AbsoluteMinMv / 1000.0), false);
+                return;
+            }
+            bool settled = volts.Count >= 4;
+            if (settled && !learnWarned && phase == "Normal" && (perCell <= floorMv || (gauge.Percent >= 0 && gauge.Percent < 8)))
+            {
+                learnWarned = true;
+                phase = "Warning";
+                warningSeq++;
+                message = "Learning the battery's true limit: the laptop will switch itself off soon, without hibernating. Save your work now.";
+                Event(string.Format(CultureInfo.InvariantCulture, "Learning: close to empty ({0:0.000} V/cell, gauge {1:0}%); warned that it will switch off by itself.", perCell / 1000, gauge.Percent));
+                SaveState();
+            }
         }
 
         string GaugePath { get { return Path.Combine(Paths.Data, "gauge.ini"); } }
@@ -1127,6 +1199,9 @@ namespace BatteryGuard
                     countdownEndUtc = countdownEndUtc.AddMinutes(2);
                     Event("Countdown postponed by 2 minutes.");
                 }
+                else if (cmd == "learn") StartLearning("cutoff");
+                else if (cmd == "learnsafe") StartLearning("safe");
+                else if (cmd == "learnstop") StopLearning();
                 else if (cmd == "resetlearned")
                 {
                     learnedFloorMv = 0;
@@ -1324,6 +1399,142 @@ namespace BatteryGuard
 
         // Every charge that needed more than a top-up teaches the two thresholds: at least what
         // has worked, and more than what hasn't.
+        void StartLearning(string mode)
+        {
+            gauge.StartLearning();
+            learnMode = mode;
+            learnState = gauge.ChargeState == "Full" ? "drain" : "charge";
+            learnRunMin = -1;
+            learnWarned = false;
+            absoluteReads = 0;
+            learnSeq++;
+            TryDelete(LearnRunPath);
+            Event(mode == "cutoff"
+                ? "Learning this battery's true limit: charge to 100%, then use it on battery until it switches itself off (Battery Guard won't hibernate it), then charge to 100% again."
+                : "Learning this battery: charge to 100%, use it on battery as usual until it hibernates at the safety limit, then charge to 100% again. Until then it only hibernates at the safety voltage.");
+            SaveState();
+            SaveGauge();
+        }
+
+        void StopLearning()
+        {
+            if (learnState == "") return;
+            learnState = learnMode = "";
+            gauge.LearningRun = false;
+            learnRunMin = -1;
+            learnSeq++;
+            Event("Learning stopped. Protection is back to normal.");
+            SaveState();
+            SaveGauge();
+        }
+
+        void TrackLearning(bool onAC, double awakeSec)
+        {
+            if (learnState == "") return;
+            string state = gauge.ChargeState;
+            if (learnState == "charge" && ((onAC && state == "Full") || (!onAC && learnRunMin < 0 && gauge.Percent >= 97)))
+            {
+                learnState = "drain";
+                learnSeq++;
+                Event(learnMode == "cutoff"
+                    ? "Learning: fully charged. Now use the laptop on battery until it switches itself off."
+                    : "Learning: fully charged. Now use the laptop on battery as usual until it hibernates at the safety limit.");
+                SaveState();
+            }
+            if (learnState == "drain")
+            {
+                if (onAC)
+                {
+                    if (learnRunMin >= 0) Event(string.Format(CultureInfo.InvariantCulture, "Learning run paused after {0:0} min: plugged in. It starts again the next time it's unplugged.", learnRunMin));
+                    learnRunMin = -1;
+                }
+                else
+                {
+                    // Every minute of the run, to disk: if it ends in a power cut, it's all still there.
+                    if (learnRunMin < 0)
+                    {
+                        learnRunMin = 0;
+                        learnPointAccum = 999;
+                        learnWarned = false;
+                        TryDelete(LearnRunPath);
+                    }
+                    learnRunMin += awakeSec / 60;
+                    learnPointAccum += awakeSec;
+                    if (learnPointAccum >= 60 && perCell > 0 && volts.Count >= 4)
+                    {
+                        learnPointAccum = 0;
+                        DurableFile.Append(LearnRunPath, string.Format(CultureInfo.InvariantCulture, "{0:0.00},{1:0}\r\n", learnRunMin, perCell), 5);
+                    }
+                }
+            }
+            if (learnState == "recharge" && onAC && lastChargeState == "Charging" && state != "Charging")
+                FinishLearning(state == "Full");
+        }
+
+        // The run that went until the battery gave out: learn the curve from it, and move the
+        // hibernate point down to just above where it gave out (leaving time for the countdown and
+        // for hibernating), but never below 3.30 V per cell.
+        void FinishTrueLimit(int cutMv, bool afterPowerCut)
+        {
+            var points = new List<double[]>();
+            try
+            {
+                if (File.Exists(LearnRunPath))
+                    foreach (string line in File.ReadAllLines(LearnRunPath))
+                    {
+                        string[] parts = line.Split(',');
+                        double t, mv;
+                        if (parts.Length == 2 && double.TryParse(parts[0], NumberStyles.Float, CultureInfo.InvariantCulture, out t) &&
+                            double.TryParse(parts[1], NumberStyles.Float, CultureInfo.InvariantCulture, out mv)) points.Add(new[] { mv, t });
+                    }
+            }
+            catch (Exception ex) { Event("Couldn't read the learning run: " + ex.Message); }
+            double end = Math.Max(learnRunMin, points.Count > 0 ? points[points.Count - 1][1] : 0);
+            if (!gauge.LearnToCutoff(points, end, cutMv))
+            {
+                Event(string.Format(CultureInfo.InvariantCulture,
+                    "The learning run ended {0} at {1:0.00} V per cell, but it was too short to learn from ({2} minutes recorded from {3:0.00} V). Charge to 100% and run it again.",
+                    afterPowerCut ? "in a power cut" : "", cutMv / 1000.0, points.Count, points.Count > 0 ? points[0][0] / 1000 : 0));
+                learnState = "charge";
+                learnRunMin = -1;
+                learnSeq++;
+                SaveState();
+                return;
+            }
+            NoteGaugeEvent();
+            cutoffMv = cutMv;
+            int newFloor = Math.Max(3300, Math.Min(3800, gauge.FloorBefore(cutMv, (cfg.CountdownSeconds / 60.0 + 1) * 1.5, 3300)));
+            learnedFloorMv = 0;
+            cfg.FloorPerCellMv = newFloor;
+            cfg.FloorLearned = 1;
+            try { cfg.Save(); }
+            catch (Exception ex) { Event("Couldn't save the learned limit: " + ex.Message); }
+            floorMv = newFloor;
+            learned = string.Format(CultureInfo.InvariantCulture,
+                "This battery gives out at about {0:0.00} V per cell, so Battery Guard hibernates at {1:0.00} V, a few minutes before that.", cutMv / 1000.0, newFloor / 1000.0);
+            Event("Learned: " + learned);
+            learnState = "recharge";
+            learnRunMin = -1;
+            learnSeq++;
+            SaveState();
+            SaveGauge();
+        }
+
+        void FinishLearning(bool reachedFull)
+        {
+            double full = gauge.FullRuntimeMinutes(floorMv);
+            learnSummary = string.Format(CultureInfo.InvariantCulture, "A full charge lasts about {0}h {1:00}m of typical use: from {2:0.00} V per cell when full, down to {3:0.00} V where it hibernates{4}. {5}",
+                (int)full / 60, (int)full % 60, gauge.FullCellMv / 1000, floorMv / 1000.0,
+                cutoffMv > 0 ? string.Format(CultureInfo.InvariantCulture, " (it gives out at {0:0.00} V)", cutoffMv / 1000.0) : "",
+                gauge.CapacityLearned ? string.Format(CultureInfo.InvariantCulture, "Capacity {0:0.0} Wh.", gauge.CapacityMwh / 1000)
+                    : reachedFull ? "" : "Its capacity is learned at the next charge that goes all the way to full.");
+            learnState = learnMode = "";
+            learnSeq++;
+            Event("Learning complete. " + learnSummary);
+            SaveState();
+            SaveGauge();
+        }
+
         void NoteChargerQuirk()
         {
             chargerQuirk = true;
@@ -1476,6 +1687,13 @@ namespace BatteryGuard
                             {
                                 if (lastPerCellMv >= 3750)
                                     Event(string.Format("Sudden power loss at {0} mV/cell - too high to be an empty battery, not learning from it.", lastPerCellMv));
+                                else if (learnState == "drain" && learnMode == "cutoff" && learnRunMin >= 0)
+                                {
+                                    // Exactly what the learning run was waiting for.
+                                    pendingCutoffMv = lastPerCellMv;
+                                    Event(string.Format(CultureInfo.InvariantCulture, "The battery gave out at {0:0.000} V per cell ({1:HH:mm}), after {2:0} min of the learning run: that's its true limit.",
+                                        lastPerCellMv / 1000.0, e.TimeCreated.Value, learnRunMin));
+                                }
                                 else
                                 {
                                     int floor = Math.Min(3750, lastPerCellMv + 80);
@@ -1555,6 +1773,14 @@ namespace BatteryGuard
                 PostponeAvailable = PostponeAvailable,
                 Message = message,
                 Learned = learned,
+                Learn = learnState,
+                LearnMode = learnMode,
+                LearnSeq = learnSeq,
+                LearnSummary = learnSummary,
+                LearnRunMin = learnRunMin,
+                CutoffMv = cutoffMv,
+                FullCellMv = (int)gauge.FullCellMv,
+                Calibrated = gauge.Calibrated,
             };
             string body = s.Body();
             DateTime now = DateTime.UtcNow;
@@ -1670,6 +1896,13 @@ namespace BatteryGuard
             lastCycle = Ini.S(kv, "Cycle", "");
             cycle = Ini.S(kv, "Cycle", "");
             cycleSeq = Ini.I(kv, "CycleSeq", 0);
+            learnState = Ini.S(kv, "Learn", "");
+            learnMode = Ini.S(kv, "LearnMode", "");
+            learnSeq = Ini.I(kv, "LearnSeq", 0);
+            learnSummary = Ini.S(kv, "LearnSummary", "");
+            learnRunMin = Ini.D(kv, "LearnRunMin", -1);
+            learnWarned = Ini.I(kv, "LearnWarned", 0) == 1;
+            cutoffMv = Ini.I(kv, "CutoffMv", 0);
             lastBatteryCounter = Ini.I(kv, "LastBatteryCounter", -1);
         }
 
@@ -1721,6 +1954,13 @@ namespace BatteryGuard
             add("Captured", captured ? 1 : 0);
             add("LastCounter", lastCounter);
             add("Cycle", cycle);
+            add("Learn", learnState);
+            add("LearnMode", learnMode);
+            add("LearnSeq", learnSeq);
+            add("LearnSummary", Ini.OneLine(learnSummary));
+            add("LearnRunMin", Ini.F(learnRunMin));
+            add("LearnWarned", learnWarned ? 1 : 0);
+            add("CutoffMv", cutoffMv);
             add("CycleSeq", cycleSeq);
             add("LastBatteryCounter", lastBatteryCounter);
             try { Ini.Write(Paths.State, sb.ToString()); }

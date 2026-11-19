@@ -92,7 +92,7 @@ namespace BatteryGuard
         Status status;
         DateTime statusStamp;
         bool stale = true;
-        int shownWarningSeq = -1, shownCountdownSeq = -1, shownCycleSeq = -1, polls;
+        int shownWarningSeq = -1, shownCountdownSeq = -1, shownCycleSeq = -1, shownLearnSeq = -1, polls;
         bool lightTaskbar;
         string shownTip;
         CountdownForm countdown;
@@ -211,6 +211,20 @@ namespace BatteryGuard
                         "This charge should go all the way to full. Leave it plugged in until Battery Guard says Full.",
                         Theme.Blue, 3600);
             }
+            // Learning the battery: one notice per step (held back during a countdown, so it isn't
+            // lost behind it; shown again at each sign-in while a step is waiting).
+            if (status.LearnSeq != shownLearnSeq && status.Phase == "Normal")
+            {
+                bool firstLook = shownLearnSeq == -1;
+                shownLearnSeq = status.LearnSeq;
+                string[] note = LearnNotice(status, firstLook);
+                if (note != null) ShowNotice(note[0], note[1], Theme.Blue, 1800);
+            }
+            if (status.Phase == "Warning" && status.WarningSeq != shownWarningSeq && status.Learn == "drain" && status.LearnMode == "cutoff")
+            {
+                shownWarningSeq = status.WarningSeq;
+                ShowNotice("Save your work now", status.Message + " Plug in if you want to stop learning.", Theme.Orange, 300);
+            }
             if (status.Phase == "Warning" && status.WarningSeq != shownWarningSeq)
             {
                 shownWarningSeq = status.WarningSeq;
@@ -234,6 +248,27 @@ namespace BatteryGuard
                 }
                 countdown.SetState(status);
             }
+        }
+
+        // Title and text for the current learning step, or null.
+        static string[] LearnNotice(Status s, bool firstLook)
+        {
+            bool cutoff = s.LearnMode == "cutoff";
+            if (s.Learn == "charge")
+                return new[] { "Learning your battery · step 1 of 3",
+                    cutoff ? "Battery Guard first learns this battery's real range. Charge it to 100%. Then unplug and use the laptop as usual until it switches itself off - suddenly, with no hibernation, so save your work often. Then plug in, start it and charge to 100% again. Its minimum and maximum voltage are set from that."
+                           : "Battery Guard is getting to know this battery. Charge it to 100%, then use the laptop on battery as you normally would until it hibernates, then charge it to 100% again. Until then it only hibernates when the voltage really reaches the safety limit." };
+            if (s.Learn == "drain")
+                return new[] { "Learning your battery · step 2 of 3",
+                    cutoff ? "Fully charged. Unplug and use the laptop as usual until it switches itself off. Battery Guard won't hibernate it, so save your work often; it warns you when the end is near. Plugging in pauses the run."
+                           : "Fully charged. Unplug and use the laptop as you normally would until Battery Guard hibernates it at the safety limit. Your open work is kept." };
+            if (s.Learn == "recharge")
+                return new[] { "Learning your battery · step 3 of 3",
+                    (cutoff && s.CutoffMv > 0 ? string.Format(CultureInfo.InvariantCulture, "The battery gave out at {0:0.00} V per cell - its true limit - so Battery Guard now hibernates at {1:0.00} V. ", s.CutoffMv / 1000.0, s.FloorPerCellMv / 1000.0) : "") +
+                    "Last step: plug in and charge to 100%. Battery Guard learns the battery's capacity from this charge." };
+            if (s.Learn == "" && !firstLook && s.LearnSummary.Length > 0)
+                return new[] { "Battery learned", s.LearnSummary };
+            return null;
         }
 
         void CloseCountdown()
@@ -1450,7 +1485,7 @@ namespace BatteryGuard
             Theme.Draw(g, look.Label, label, look.Color, c.X - lSize.Width / 2, c.Y + nSize.Height / 2 - 4);
             if (status != null && !stale && status.SigmaPct > 0 && pct >= 0)
             {
-                string acc = "\u00b1" + Math.Round(status.SigmaPct).ToString(CultureInfo.InvariantCulture) + "%";
+                string acc = "\u00b1" + Math.Round(status.SigmaPct).ToString(CultureInfo.InvariantCulture) + "%" + (status.Learn.Length > 0 ? " \u00b7 learning" : "");
                 SizeF aSize = Theme.Measure(g, acc, Theme.Px(10.5f, false));
                 Theme.Draw(g, acc, Theme.Px(10.5f, false), Theme.Sub, c.X - aSize.Width / 2, c.Y + nSize.Height / 2 + 11);
             }
@@ -1462,7 +1497,8 @@ namespace BatteryGuard
             string pill;
             Color pillColor;
             if (stale || status == null) { pill = "Service stopped"; pillColor = Theme.Red; }
-            else if (status.Protection == "Active") { pill = "Protected"; pillColor = Theme.Green; }
+            else if (status.Protection == "Active" && status.Learn == "drain" && status.LearnMode == "cutoff") { pill = "Learning · no hibernation"; pillColor = Theme.Orange; }
+            else if (status.Protection == "Active") { pill = status.Learn.Length > 0 ? "Protected · learning" : "Protected"; pillColor = Theme.Green; }
             else if (status.Protection == "Off") { pill = "Protection off"; pillColor = Theme.Gray; }
             else { pill = "No voltage reading"; pillColor = Theme.Orange; }
             if (status != null && status.DryRun) pill += " \u00b7 test";
@@ -1518,7 +1554,16 @@ namespace BatteryGuard
             string advice;
             Color color;
             string wait = "a full charge is possible after " + Fmt.When(s.ReadyAtUtc);
+            bool trueLimit = s.LearnMode == "cutoff";
             if (s.Phase == "Countdown" || s.Phase == "Hibernating") { advice = "Plug in now to stop it hibernating."; color = Theme.Red; }
+            else if (s.Learn == "drain" && !s.OnAC)
+            {
+                advice = trueLimit ? "Learning: keep using it on battery until it switches itself off. Save your work often." : "Learning: keep using it on battery until it hibernates at the safety limit.";
+                color = s.Phase == "Warning" ? Theme.Red : Theme.Orange;
+            }
+            else if (s.Learn == "drain") { advice = trueLimit ? "Learning: unplug and use it on battery until it switches itself off." : "Learning: unplug and use it on battery until it hibernates."; color = Theme.Blue; }
+            else if (s.Learn == "charge" && s.ChargeState != "Full") { advice = "Learning: first charge it to 100%."; color = Theme.Blue; }
+            else if (s.Learn == "recharge" && s.ChargeState != "Full") { advice = "Learning: last step - charge it to 100%."; color = Theme.Blue; }
             else if (!s.OnAC)
             {
                 if (s.Phase == "Warning") { advice = !s.StopsEarly || s.ReadyForFull ? "Battery low - plug in now." : "Plug in now. This charge will only add about 20% (" + wait + ")."; color = Theme.Orange; }
@@ -1545,6 +1590,14 @@ namespace BatteryGuard
 
             // Times and the last charge.
             var rows = new List<string[]>();
+            if (s.Learn.Length > 0)
+            {
+                bool cutoff = s.LearnMode == "cutoff";
+                string so = s.LearnRunMin >= 0 && !s.OnAC ? " (" + Fmt.Minutes(s.LearnRunMin) + " so far)" : "";
+                rows.Add(new[] { "Learning", s.Learn == "charge" ? "Step 1 of 3: charge to 100%"
+                    : s.Learn == "drain" ? (cutoff ? "Step 2 of 3: use it on battery until it switches itself off" : "Step 2 of 3: use it on battery until it hibernates") + so
+                    : "Step 3 of 3: charge to 100%" });
+            }
             if (!s.OnAC) rows.Add(new[] { "On battery for", Ago(s.OnBatterySinceUtc) });
             else if (s.ChargeState == "Charging")
             {
@@ -1649,6 +1702,7 @@ namespace BatteryGuard
     class SettingsForm : Form
     {
         static readonly int[] FloorChoices = { 3550, 3500, 3420 };
+        int floorLearned;
         static readonly string[] FloorNames = { "Extra safe \u00b7 3.55 V", "Balanced \u00b7 3.50 V", "Longest runtime \u00b7 3.42 V" };
 
         readonly Agent agent;
@@ -1696,8 +1750,10 @@ namespace BatteryGuard
             hideWindows = Row("Hide Windows' warnings", "Its low-battery popups are wrong for this battery", new ToggleSwitch());
             showTray = Row("Show the tray icon", "Just for you", new ToggleSwitch());
 
-            var reset = new FlatButton("Reset learning", false) { Location = new Point(22, 466), Size = new Size(128, 36) };
-            reset.Click += delegate { ResetLearning(); };
+            Status current = Status.Load();
+            bool learning = current != null && current.Learn.Length > 0;
+            var reset = new FlatButton(learning ? "Stop learning" : "Learn my battery", false) { Location = new Point(22, 466), Size = new Size(156, 36) };
+            reset.Click += delegate { if (learning) StopLearning(); else LearnBattery(); };
             var cancel = new FlatButton("Cancel", false) { Location = new Point(206, 466), Size = new Size(100, 36) };
             cancel.Click += delegate { Close(); };
             var save = new FlatButton("Save", true) { Location = new Point(316, 466), Size = new Size(100, 36) };
@@ -1752,7 +1808,8 @@ namespace BatteryGuard
             if (index < 0)
             {
                 customFloor = s.FloorPerCellMv;
-                floorBox.Items.Add(string.Format(CultureInfo.InvariantCulture, "Custom \u00b7 {0:0.000} V", s.FloorPerCellMv / 1000.0));
+                floorLearned = s.FloorLearned;
+                floorBox.Items.Add(string.Format(CultureInfo.InvariantCulture, s.FloorLearned == 1 ? "Learned limit \u00b7 {0:0.00} V" : "Custom \u00b7 {0:0.000} V", s.FloorPerCellMv / 1000.0));
                 index = floorBox.Items.Count - 1;
             }
             floorBox.SelectedIndex = index;
@@ -1767,7 +1824,9 @@ namespace BatteryGuard
         {
             Settings s = Settings.Load() ?? new Settings();
             s.Enabled = enabled.Checked ? 1 : 0;
-            s.FloorPerCellMv = floorBox.SelectedIndex < FloorChoices.Length ? FloorChoices[floorBox.SelectedIndex] : customFloor;
+            bool preset = floorBox.SelectedIndex < FloorChoices.Length;
+            s.FloorPerCellMv = preset ? FloorChoices[floorBox.SelectedIndex] : customFloor;
+            s.FloorLearned = preset ? 0 : floorLearned;
             s.WarnMinutes = (double)warnBox.Value;
             s.CountdownSeconds = (int)countdownBox.Value;
             s.AllowPostpone = postpone.Checked ? 1 : 0;
@@ -1787,12 +1846,37 @@ namespace BatteryGuard
             Close();
         }
 
-        void ResetLearning()
+        // Learns the battery's true limit: charge to 100%, run on battery until it switches itself
+        // off, charge to 100% again.
+        void LearnBattery()
         {
-            if (MessageBox.Show(this, "Forget everything Battery Guard has learned about this battery (runtime curve, capacity, safety limit)?",
+            const string text =
+                "Battery Guard will learn how long this battery really lasts and where it really gives out:\n\n" +
+                "1.  Charge it to 100%.\n" +
+                "2.  Unplug and use the laptop as usual until it switches itself off. Battery Guard won't hibernate it this time, so save your work often; it warns you when the end is near. (It still steps in if the battery reaches 3.0 V per cell, the lowest a lithium cell should go.)\n" +
+                "3.  Plug in, start the laptop and charge it to 100%.\n\n" +
+                "Afterwards it knows how long a full charge lasts with your use, and hibernates just a few minutes before the point where this battery gives out, so you get nearly all of it.\n\n" +
+                "Once is enough; don't leave the battery empty afterwards. Plugging in pauses the run.\n\nStart learning?";
+            if (MessageBox.Show(this, text, "Learn my battery", MessageBoxButtons.YesNo, MessageBoxIcon.Information) != DialogResult.Yes) return;
+            try
+            {
+                Commands.Send("learn");
+                Log.Write("Learning the battery's true limit, started by " + Environment.UserName + ".");
+                Close();
+            }
+            catch (Exception ex) { MessageBox.Show(this, "Couldn't start learning: " + ex.Message, "Battery Guard"); }
+        }
+
+        void StopLearning()
+        {
+            if (MessageBox.Show(this, "Stop learning? Protection goes back to normal; what was learned so far is kept.",
                 "Battery Guard", MessageBoxButtons.YesNo, MessageBoxIcon.Question) != DialogResult.Yes) return;
-            try { Commands.Send("resetlearned"); }
-            catch (Exception ex) { MessageBox.Show(this, "Couldn't reset: " + ex.Message, "Battery Guard"); }
+            try
+            {
+                Commands.Send("learnstop");
+                Close();
+            }
+            catch (Exception ex) { MessageBox.Show(this, "Couldn't stop learning: " + ex.Message, "Battery Guard"); }
         }
     }
 }

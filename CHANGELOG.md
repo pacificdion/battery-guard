@@ -1,5 +1,17 @@
 # Changelog
 
+## 2.1 alpha — 2026-11-19 (test build)
+
+**Battery Guard now learns each battery's real range.**
+
+- **Learning cycle on every new PC:** charge to 100%, use it on battery until the laptop **switches itself off**, then charge to 100% again. The installer warns about this before installing and again when it finishes; the app guides you through each step.
+- From that run it sets the battery's **maximum voltage** (per cell, when full) and **minimum voltage** (where it really gives out). It learns how long a full charge lasts with your typical use, and the capacity from the charge afterwards.
+- It then **hibernates just above where the battery really gives out**, leaving time for the countdown and hibernation, but never below 3.30 V per cell.
+- **Settings → Learn my battery** runs the cycle again, and becomes **Stop learning** while one is running. *Hibernate at* shows the learned limit.
+- Safety net during the run: at 3.0 V per cell (the lowest a lithium cell should go) it hibernates anyway and uses that as the limit.
+- Until the battery has been learned, it only hibernates when the voltage really reaches the limit, never early on an estimate.
+- The run is recorded to disk every minute, so the power cut at the end loses nothing.
+
 ## 2.0 — 2026-11-19
 
 First public release.

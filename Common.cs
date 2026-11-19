@@ -147,6 +147,7 @@ namespace BatteryGuard
         public int AllowPostpone = 1;
         public int HideWindowsWarnings = 1;
         public int Cells = 0;
+        public int FloorLearned = 0;        // 1 = FloorPerCellMv was set by learning the battery's true limit
         // Test mode: never touches power settings or hibernates; can fake a draining battery.
         public int DryRun = 0;
         public int SimulateBattery = 0;
@@ -170,6 +171,7 @@ namespace BatteryGuard
             s.AllowPostpone = Ini.I(kv, "AllowPostpone", s.AllowPostpone);
             s.HideWindowsWarnings = Ini.I(kv, "HideWindowsWarnings", s.HideWindowsWarnings);
             s.Cells = Ini.I(kv, "Cells", s.Cells);
+            s.FloorLearned = Ini.I(kv, "FloorLearned", 0) == 1 ? 1 : 0;
             s.DryRun = Ini.I(kv, "DryRun", s.DryRun);
             s.SimulateBattery = Ini.I(kv, "SimulateBattery", s.SimulateBattery);
             s.SimStartMv = Ini.I(kv, "SimStartMv", s.SimStartMv);
@@ -201,6 +203,7 @@ namespace BatteryGuard
             sb.AppendFormat(CultureInfo.InvariantCulture, "Enabled={0}\r\n", Enabled);
             sb.Append("# Hibernate when the battery's voltage per cell falls to this (millivolts).\r\n");
             sb.AppendFormat(CultureInfo.InvariantCulture, "FloorPerCellMv={0}\r\n", FloorPerCellMv);
+            if (FloorLearned == 1) sb.Append("# Set by learning this battery's true limit (Settings > Learn my battery).\r\nFloorLearned=1\r\n");
             sb.AppendFormat(CultureInfo.InvariantCulture, "WarnMinutes={0}\r\n", Ini.F(WarnMinutes));
             sb.AppendFormat(CultureInfo.InvariantCulture, "CountdownSeconds={0}\r\n", CountdownSeconds);
             sb.AppendFormat(CultureInfo.InvariantCulture, "AllowPostpone={0}\r\n", AllowPostpone);
@@ -244,6 +247,12 @@ namespace BatteryGuard
         public DateTime CountdownEndUtc;
         public bool Emergency, PostponeAvailable;
         public string Message = "", Learned = "";
+        public string Learn = "";           // learning the battery: "" | charge | drain | recharge
+        public string LearnMode = "";       // safe (to the safety limit) | cutoff (until the battery gives out)
+        public int LearnSeq, CutoffMv, FullCellMv;
+        public string LearnSummary = "";
+        public double LearnRunMin = -1;
+        public bool Calibrated;
 
         public static Status Load()
         {
@@ -290,6 +299,14 @@ namespace BatteryGuard
             s.PostponeAvailable = Ini.I(kv, "PostponeAvailable", 0) == 1;
             s.Message = Ini.S(kv, "Message", "");
             s.Learned = Ini.S(kv, "Learned", "");
+            s.Learn = Ini.S(kv, "Learn", "");
+            s.LearnMode = Ini.S(kv, "LearnMode", "");
+            s.LearnSeq = Ini.I(kv, "LearnSeq", 0);
+            s.LearnSummary = Ini.S(kv, "LearnSummary", "");
+            s.LearnRunMin = Ini.D(kv, "LearnRunMin", -1);
+            s.CutoffMv = Ini.I(kv, "CutoffMv", 0);
+            s.FullCellMv = Ini.I(kv, "FullCellMv", 0);
+            s.Calibrated = Ini.I(kv, "Calibrated", 1) == 1;
             return s;
         }
 
@@ -345,6 +362,14 @@ namespace BatteryGuard
             add("PostponeAvailable", PostponeAvailable ? 1 : 0);
             add("Message", Ini.OneLine(Message));
             add("Learned", Ini.OneLine(Learned));
+            add("Learn", Learn);
+            add("LearnMode", LearnMode);
+            add("LearnSeq", LearnSeq);
+            add("LearnSummary", Ini.OneLine(LearnSummary));
+            add("LearnRunMin", LearnRunMin < 0 ? "-1" : ((int)LearnRunMin).ToString(CultureInfo.InvariantCulture));
+            add("CutoffMv", CutoffMv);
+            add("FullCellMv", FullCellMv);
+            add("Calibrated", Calibrated ? 1 : 0);
             return sb.ToString();
         }
 

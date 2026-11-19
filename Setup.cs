@@ -608,6 +608,7 @@ namespace BatteryGuard
     {
         readonly bool uninstallMode;
         readonly string installed;
+        readonly bool learnsFirst; // nothing learned on this PC yet: the first run goes until the battery gives out
         readonly Label status;
         readonly ProgressLine bar;
         readonly FlatButton primary, secondary, extra;
@@ -622,6 +623,7 @@ namespace BatteryGuard
         {
             uninstallMode = uninstall;
             installed = page == "new" ? null : Installer.InstalledVersion(); // "new": how a first install looks
+            learnsFirst = page == "new" || page == "done" || !File.Exists(Path.Combine(Installer.Data, "gauge.ini"));
             SuspendLayout();
             AutoScaleDimensions = new SizeF(96F, 96F);
             AutoScaleMode = AutoScaleMode.Dpi;
@@ -632,16 +634,16 @@ namespace BatteryGuard
             BackColor = Theme.Bg;
             Font = Theme.Pt(9.5f, false);
             Icon = Theme.AppIcon;
-            ClientSize = new Size(560, 420);
+            ClientSize = new Size(560, 470);
             DoubleBuffered = true;
 
-            status = new Label { ForeColor = Theme.Sub, Location = new Point(32, 314), Size = new Size(496, 20), Visible = false };
-            bar = new ProgressLine { Location = new Point(32, 340), Size = new Size(496, 6), Visible = false };
-            removeData = new ToggleSwitch { Location = new Point(32, 332), Visible = false };
-            removeDataLabel = new Label { Text = "Also delete the history and logs", ForeColor = Theme.Text, AutoSize = true, Location = new Point(84, 335), Visible = false };
-            primary = new FlatButton("Install", true) { Location = new Point(408, 364), Size = new Size(120, 36) };
-            secondary = new FlatButton("Cancel", false) { Location = new Point(288, 364), Size = new Size(104, 36) };
-            extra = new FlatButton("Uninstall", false) { Location = new Point(32, 364), Size = new Size(104, 36), Visible = false };
+            status = new Label { ForeColor = Theme.Sub, Location = new Point(32, 364), Size = new Size(496, 20), Visible = false };
+            bar = new ProgressLine { Location = new Point(32, 390), Size = new Size(496, 6), Visible = false };
+            removeData = new ToggleSwitch { Location = new Point(32, 382), Visible = false };
+            removeDataLabel = new Label { Text = "Also delete the history and logs", ForeColor = Theme.Text, AutoSize = true, Location = new Point(84, 385), Visible = false };
+            primary = new FlatButton("Install", true) { Location = new Point(408, 414), Size = new Size(120, 36) };
+            secondary = new FlatButton("Cancel", false) { Location = new Point(288, 414), Size = new Size(104, 36) };
+            extra = new FlatButton("Uninstall", false) { Location = new Point(32, 414), Size = new Size(104, 36), Visible = false };
             primary.Click += delegate { OnPrimary(); };
             secondary.Click += delegate { Close(); };
             extra.Click += delegate { ShowUninstall(); };
@@ -674,6 +676,8 @@ namespace BatteryGuard
             body = "Keeps a laptop with a faulty battery gauge running until the battery is really empty, then hibernates safely, with warnings first. " +
                    "Shows the real charge, the voltage, and every charge in a clear history.";
             checks.Clear();
+            if (learnsFirst)
+                checks.Add(new[] { "warn", "First it learns your battery, once: charge to 100%, then use it on battery until the laptop switches itself off - suddenly, with no hibernation. Save your work often during that run. Then charge to 100% again; its voltage range is set from that." });
             if (Installer.HasBattery()) checks.Add(new[] { "ok", "Battery found." });
             else checks.Add(new[] { "warn", "No battery found. Battery Guard is for laptops; it will wait until it can see a battery." });
             bool supported;
@@ -723,8 +727,16 @@ namespace BatteryGuard
             checks.Clear();
             if (!removed)
             {
-                checks.Add(new[] { "ok", "Protection is on: it warns 5 minutes before the battery is empty, then counts down and hibernates." });
-                checks.Add(new[] { "ok", "The real charge level gets more accurate with every charge and every run down." });
+                if (learnsFirst)
+                {
+                    checks.Add(new[] { "warn", "Now it learns your battery: charge to 100%, then use it on battery until it switches itself off (save your work often), then charge to 100% again." });
+                    checks.Add(new[] { "ok", "From then on it warns before the battery is empty, counts down and hibernates just above where this battery really gives out." });
+                }
+                else
+                {
+                    checks.Add(new[] { "ok", "Protection is on: it warns 5 minutes before the battery is empty, then counts down and hibernates." });
+                    checks.Add(new[] { "ok", "The real charge level gets more accurate with every charge and every run down." });
+                }
             }
             status.Visible = bar.Visible = removeData.Visible = removeDataLabel.Visible = extra.Visible = false;
             primary.Text = removed ? "Close" : "Open Battery Guard";
