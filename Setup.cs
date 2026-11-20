@@ -1,4 +1,4 @@
-// Battery Guard - Copyright (C) 2026 Dion Fabian. Free software under the GNU General Public License v3.0; see LICENSE.
+// Battery Guard - Copyright (C) 2026 Dion Fabian. All rights reserved. See LICENSE.
 // Battery Guard Setup: installs, updates or removes Battery Guard for every user on this PC.
 // A single file with both programs inside; asks for administrator rights once (UAC).
 //
@@ -148,6 +148,7 @@ namespace BatteryGuard
                 Directory.CreateDirectory(Bin);
                 PutFile(Path.Combine(Bin, "BatteryGuardCore.exe"), Payload("payload.core"));
                 PutFile(Path.Combine(Bin, "BatteryGuard.exe"), Payload("payload.agent"));
+                PutFile(Path.Combine(Bin, "LICENSE.txt"), Payload("license.txt"));
                 PutFile(Path.Combine(Bin, "BatteryGuardCore.exe.config"), Encoding.UTF8.GetBytes(GcConfig));
                 PutFile(Path.Combine(Bin, "BatteryGuard.exe.config"), Encoding.UTF8.GetBytes(GcConfig));
                 string self = Assembly.GetExecutingAssembly().Location, uninstaller = Path.Combine(Bin, "uninstall.exe");
@@ -840,7 +841,7 @@ namespace BatteryGuard
 
             Theme.DrawLogo(g, 32, 30, 56);
             Theme.Draw(g, Product.Name, Theme.Px(24, true), Theme.Text, 102, 30);
-            Theme.Draw(g, "Version " + Product.Version + "  \u00b7  by " + Product.Author, Theme.Px(12.5f, false), Theme.Sub, 104, 64);
+            Theme.Draw(g, "Version " + Product.Version + "  \u00b7  \u00a9 2026 " + Product.Author + ". All rights reserved.", Theme.Px(12.5f, false), Theme.Sub, 104, 64);
 
             float y = 112;
             Theme.Draw(g, headline ?? "", Theme.Px(16, true), headlineColor, 32, y);

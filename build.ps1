@@ -1,4 +1,4 @@
-# Battery Guard - Copyright (C) 2026 Dion Fabian. Free software under the GNU General Public License v3.0; see LICENSE.
+# Battery Guard - Copyright (C) 2026 Dion Fabian. All rights reserved. See LICENSE.
 # Builds Battery Guard with the C# compiler that comes with Windows (.NET Framework 4.x).
 # Output: dist\BatteryGuard-Setup-<version>.exe - one file that installs, updates and removes it.
 # Nothing is installed by this script; run the setup file for that.
@@ -29,12 +29,13 @@ try {
 
     Compile (@('/target:winexe', "/out:$obj\BatteryGuardCore.exe", "/win32icon:$obj\app-small.ico", '/reference:System.Management.dll', '/reference:System.ServiceProcess.dll') +
         $shared + @('Gauge.cs', 'Core.cs'))
-    $wpf = Join-Path (Split-Path $csc) 'WPF'   # where System.Speech.dll lives
-    Compile (@('/target:winexe', "/out:$obj\BatteryGuard.exe", "/win32icon:$obj\app.ico", "/resource:$obj\app-small.ico,app.ico", "/lib:$wpf", '/reference:System.Speech.dll') +
-        $forms + $shared + @('UI.cs', 'Agent.cs'))
+    $voice = Join-Path $src 'sounds\charging-stopped.wav'   # the spoken alert (Kokoro voice, Apache-2.0)
+    Compile (@('/target:winexe', "/out:$obj\BatteryGuard.exe", "/win32icon:$obj\app.ico", "/resource:$obj\app-small.ico,app.ico", "/resource:$voice,charging-stopped.wav") +
+        $forms + $shared + @('UI.cs', 'Agent.cs', 'Flyout.cs'))
 
     $setup = Join-Path $dist "BatteryGuard-Setup-$version.exe"
-    $payload = @("/resource:$obj\BatteryGuardCore.exe,payload.core", "/resource:$obj\BatteryGuard.exe,payload.agent", "/resource:$obj\app-small.ico,app.ico")
+    $license = Join-Path $src 'LICENSE'   # installed next to the programs as LICENSE.txt
+    $payload = @("/resource:$obj\BatteryGuardCore.exe,payload.core", "/resource:$obj\BatteryGuard.exe,payload.agent", "/resource:$obj\app-small.ico,app.ico", "/resource:$license,license.txt")
     Compile (@('/target:winexe', "/out:$setup", "/win32icon:$obj\app.ico", '/win32manifest:setup.manifest') + $payload + $forms + $shared + @('UI.cs', 'Setup.cs'))
     # Same installer without the admin request, only for looking at its pages while developing.
     Compile (@('/target:winexe', "/out:$obj\Setup-preview.exe", "/win32icon:$obj\app.ico") + $payload + $forms + $shared + @('UI.cs', 'Setup.cs'))

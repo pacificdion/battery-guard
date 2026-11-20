@@ -11,20 +11,20 @@
 
 <p align="center">
   <a href="https://github.com/pacificdion/battery-guard/releases/latest"><img src="https://img.shields.io/github/v/release/pacificdion/battery-guard?label=download&color=22c55e" alt="Latest release"></a>
-  <a href="LICENSE"><img src="https://img.shields.io/badge/license-GPL--3.0-blue" alt="GPL-3.0 license"></a>
+  <a href="LICENSE"><img src="https://img.shields.io/badge/license-all%20rights%20reserved-blue" alt="License: all rights reserved"></a>
   <img src="https://img.shields.io/badge/Windows-10%20%7C%2011-0078D6" alt="Windows 10 and 11">
-  <img src="https://img.shields.io/badge/size-357%20KB-lightgrey" alt="Installer size">
+  <img src="https://img.shields.io/badge/size-479%20KB-lightgrey" alt="Installer size">
 </p>
 
 <p align="center">
-  <a href="https://github.com/pacificdion/battery-guard/releases/download/v2.0/BatteryGuard-Setup-2.0.exe"><b>&#11015; Download BatteryGuard-Setup-2.0.exe</b></a>
+  <a href="https://github.com/pacificdion/battery-guard/releases/download/v2.1.3/BatteryGuard-Setup-2.1.3.exe"><b>&#11015; Download BatteryGuard-Setup-2.1.3.exe</b></a>
   &nbsp;·&nbsp; <a href="#install">How to install</a>
   &nbsp;·&nbsp; <a href="#uninstall">Uninstall</a>
   &nbsp;·&nbsp; <a href="https://github.com/pacificdion/battery-guard/issues">Report a problem</a>
 </p>
 
 > [!NOTE]
-> **2.1.2 alpha test build available:** [`BatteryGuard-Setup-2.1.2.exe`](https://github.com/pacificdion/battery-guard/releases/download/v2.1.2-alpha/BatteryGuard-Setup-2.1.2.exe) ([release notes](https://github.com/pacificdion/battery-guard/releases/tag/v2.1.2-alpha)). It adds [battery learning](#learning-your-battery): the first time the battery runs all the way down, it lets the laptop **switch itself off**, to find the battery's real limit. It's for testing; for everyday use, take 2.0 above. Please [report how it goes](https://github.com/pacificdion/battery-guard/issues/new).
+> **New since 2.0:** Battery Guard [learns your battery's real range](#learning-your-battery): on a new PC, the first time the battery runs all the way down, it lets the laptop **switch itself off** to find where the battery really gives out. Clicking the tray icon opens a [power mode flyout](#using-battery-guard). See the [changelog](CHANGELOG.md).
 
 ---
 
@@ -59,7 +59,7 @@ Battery Guard ignores the wrong percentage and watches the **battery's real volt
 
 ## What it does
 
-- *(2.1 alpha)* **Learns your battery's real range, on its own.** On a new PC it doesn't hibernate until the battery has run all the way down once: the laptop switches itself off when the battery gives out. From that run it sets the battery's **minimum voltage** (where it really gives out) and **maximum voltage** (where the charger stops), and how long a full charge lasts with your use. Nothing to do but use and charge it as usual. See [Learning your battery](#learning-your-battery).
+- **Learns your battery's real range, on its own.** On a new PC it doesn't hibernate until the battery has run all the way down once: the laptop switches itself off when the battery gives out. From that run it sets the battery's **minimum voltage** (where it really gives out) and **maximum voltage** (where the charger stops), and how long a full charge lasts with your use. Nothing to do but use and charge it as usual. See [Learning your battery](#learning-your-battery).
 - **Runs until the battery is really empty.** It switches off Windows' early "critical battery" action and decides by the voltage of each cell.
 - **Warns you, then hibernates safely.** A notice comes about 5 minutes before empty, then a 60-second countdown, then the laptop hibernates so your open work is kept. One "+2 min" postpone is allowed, and plugging in cancels it.
 - **Shows the real charge** in the tray as a battery icon with the percentage inside, and in a dashboard with time left, voltage, charge power and what Windows wrongly claims.
@@ -79,7 +79,7 @@ Battery Guard ignores the wrong percentage and watches the **battery's real volt
 
 <img src="docs/images/tray-icons.png" width="560" alt="Tray icon states">
 
-| Installer (2.1 alpha) | Done (2.1 alpha) | A notice |
+| Installer | Done | A notice |
 |---|---|---|
 | <img src="docs/images/setup-install.png" width="300" alt="Installer"> | <img src="docs/images/setup-done.png" width="300" alt="Installer finished"> | <img src="docs/images/notice.png" width="300" alt="Notice: plug in the charger now"> |
 
@@ -94,17 +94,17 @@ Tested on a Dell Inspiron 5521 (Windows 10 22H2) with a 3-cell aftermarket batte
 
 ## Install
 
-1. **Download** [`BatteryGuard-Setup-2.0.exe`](https://github.com/pacificdion/battery-guard/releases/download/v2.0/BatteryGuard-Setup-2.0.exe) from the [latest release](https://github.com/pacificdion/battery-guard/releases/latest).
+1. **Download** [`BatteryGuard-Setup-2.1.3.exe`](https://github.com/pacificdion/battery-guard/releases/download/v2.1.3/BatteryGuard-Setup-2.1.3.exe) from the [latest release](https://github.com/pacificdion/battery-guard/releases/latest).
 2. **Run it.** The installer isn't code-signed, so Windows SmartScreen may say *"Windows protected your PC"*. Click **More info** → **Run anyway**.
 3. Click **Yes** on the administrator (UAC) prompt.
 4. Check the short summary (battery found, hibernation available) and click **Install**. It takes a few seconds.
 5. Click **Open Battery Guard**. From now on its battery icon sits next to the clock for every user. If you can't see it, click the **^** arrow and drag it onto the taskbar.
-6. *(2.1 alpha)* **It learns your battery on its own**: until the battery has run all the way down once, it won't hibernate, so the laptop will **switch itself off** when the battery gives out. ⚠️ **Save your work often** until then (it warns you near the end). Details: [Learning your battery](#learning-your-battery).
+6. **It learns your battery on its own**: until the battery has run all the way down once, it won't hibernate, so the laptop will **switch itself off** when the battery gives out. ⚠️ **Save your work often** until then (it warns you near the end). Details: [Learning your battery](#learning-your-battery).
 
 **Optional: check the download.** In PowerShell, run:
 
 ```powershell
-Get-FileHash "$env:USERPROFILE\Downloads\BatteryGuard-Setup-2.0.exe" -Algorithm SHA256
+Get-FileHash "$env:USERPROFILE\Downloads\BatteryGuard-Setup-2.1.3.exe" -Algorithm SHA256
 ```
 
 The hash should match the SHA-256 listed in the [release notes](https://github.com/pacificdion/battery-guard/releases/latest).
@@ -112,16 +112,17 @@ The hash should match the SHA-256 listed in the [release notes](https://github.c
 **Silent install** (for scripts or several PCs), from an administrator prompt:
 
 ```powershell
-.\BatteryGuard-Setup-2.0.exe /S
+.\BatteryGuard-Setup-2.1.3.exe /S
 ```
 
-**Updating:** run a newer setup file. Settings, history and everything it has learned are kept.
+**Updating:** run a newer setup file. Settings, history and everything it has learned are kept. After updating from 2.0, protection carries on as before; to learn the battery's real range, choose **Settings → Learn my battery**.
 
 ## Using Battery Guard
 
 | | |
 |---|---|
-| **Tray icon** | The real charge inside a battery. Green: charging or full. White: on battery. Red: 20% or less, or hibernating soon. Amber: plugged in but not charging. A "–": the service isn't running. Hover for the voltage and time left; click to open the dashboard. |
+| **Tray icon** | The real charge inside a battery. Green: charging or full. White: on battery. Red: 20% or less, or hibernating soon. Amber: plugged in but not charging. A "–": the service isn't running. Hover for the voltage and time left. Right-click for the menu. |
+| **Flyout** | Click the tray icon: a small panel above the taskbar shows the real charge and time left, and Windows' **power mode** slider: *Battery saver* (on battery), *Better battery*, *Better performance*, *Best performance*. Drag or click the slider, or use the arrow keys. *Battery Guard* opens the dashboard; *Power & sleep* opens Windows' settings. It follows the taskbar's light or dark colour. Power modes need Windows' Balanced plan; on another plan it offers to switch. |
 | **Dashboard** | Real charge (with its accuracy), time left at the current use, voltage per pack and per cell, what Windows claims, the last 4 hours, and advice on what to do now. Click the chart for the full history. |
 | **History** | Choose 4 hours to Everything. **Hover** for the details at any moment, **scroll** to zoom, **drag** to move, **double-click** to go back. Hatched areas mean asleep or off. Click a charge in the list to jump to it. |
 | **Battery log** | Opens a copy of the full CSV log, one line every 10–60 seconds, in Excel or any editor. |
@@ -131,8 +132,6 @@ The hash should match the SHA-256 listed in the [release notes](https://github.c
 You can also open the dashboard from **Start menu → Battery Guard**.
 
 ## Learning your battery
-
-> New in **2.1**, currently an [alpha test build](https://github.com/pacificdion/battery-guard/releases/tag/v2.1.2-alpha). 2.0 doesn't have this yet.
 
 A faulty gauge says nothing useful about where a battery really ends. So Battery Guard measures it, **on its own**, on every PC it's installed on (and again if you choose **Settings → Learn my battery**):
 
@@ -152,13 +151,14 @@ Open the dashboard and click **Settings**. These apply to every user on the PC, 
 | Setting | Default | What it means |
 |---|---|---|
 | Battery protection | On | Off gives control back to Windows' own (wrong) battery rules. |
-| Hibernate at | 3.50 V per cell (2.1: learned limit) | In 2.1, set by learning your battery: just above where it really gives out. Or choose *Extra safe* 3.55 V · *Balanced* 3.50 V · *Longest runtime* 3.42 V. |
+| Hibernate at | Learned limit | Set by learning your battery: just above where it really gives out (after updating from 2.0, your earlier setting stays until it has learned). Or choose *Extra safe* 3.55 V · *Balanced* 3.50 V · *Longest runtime* 3.42 V. |
 | Warn me | 5 min | How long before hibernating the warning appears (1–30). |
 | Countdown | 60 s | How long the countdown stays on screen (15–300). |
 | Allow one "+2 min" | On | One postpone during the countdown. |
 | Hide Windows' warnings | On | Windows' low-battery pop-ups are wrong for these batteries. |
 | Show the tray icon | On | Per user. Protection stays on either way. |
-| Learn my battery | – | *(2.1 alpha)* Learns the battery again ([how](#learning-your-battery)): no hibernation until it has run all the way down once more. During learning this button says **Stop learning**. |
+| Speak when charging stops early | Off | Per user. A natural female voice says *"Charging stopped early."* (A short clip built into the app, made with the open-source [Kokoro](https://huggingface.co/hexgrad/Kokoro-82M) voice, Apache-2.0. It works offline.) |
+| Learn my battery | – | Learns the battery again ([how](#learning-your-battery)) from the **next** run on battery, never an earlier one. Pressed while plugged in, the next unplug starts it. Pressed on battery, that run stays protected, and the run after the next charge is the one learned. During that run it doesn't hibernate. During learning this button says **Stop learning**. |
 
 If the battery ever cuts out before the safety limit, Battery Guard notices at the next start-up and raises the limit by itself.
 
@@ -202,7 +202,7 @@ Silent uninstall, from an administrator prompt (add `--remove-data` to delete th
 
 ## Build it yourself
 
-You don't need Visual Studio: it builds with the C# compiler that comes with Windows.
+The source is here so you can see exactly what Battery Guard does. You may build it unchanged for your own use; sharing builds or modified versions isn't allowed (see [License](#license)). You don't need Visual Studio: it builds with the C# compiler that comes with Windows.
 
 ```powershell
 git clone https://github.com/pacificdion/battery-guard.git
@@ -210,13 +210,15 @@ cd battery-guard
 powershell -ExecutionPolicy Bypass -File .\build.ps1
 ```
 
-The result is `dist\BatteryGuard-Setup-2.1.exe`. The build draws the icon, compiles the service, the tray app and the installer, embeds both programs in the installer, and checks that no build paths end up in the files.
+The result is `dist\BatteryGuard-Setup-2.1.3.exe`. The build draws the icon, compiles the service, the tray app and the installer, embeds both programs in the installer, and checks that no build paths end up in the files.
 
 | File | What it is |
 |---|---|
 | [`Core.cs`](Core.cs) | The service: battery reading, protection, hibernation, charging tracker, logs |
 | [`Gauge.cs`](Gauge.cs) | The learning fuel gauge (percentage, time left, time to full) |
 | [`Agent.cs`](Agent.cs) | The tray app: icon, dashboard, history chart, notices, countdown, settings |
+| [`Flyout.cs`](Flyout.cs) | The tray icon's flyout and Windows' power modes |
+| [`sounds/`](sounds) | The voice alert clip (made with Kokoro, Apache-2.0) |
 | [`UI.cs`](UI.cs) | Shared look: colours (light/dark), fonts, buttons, logo |
 | [`Common.cs`](Common.cs) | Shared by all: paths, settings, status, logs, inbox |
 | [`Setup.cs`](Setup.cs) | The installer and uninstaller |
@@ -227,14 +229,13 @@ The result is `dist\BatteryGuard-Setup-2.1.exe`. The build draws the icon, compi
 
 **Testing without touching your PC:** run the service in a test folder with `BatteryGuardCore.exe --data C:\Temp\bgtest`. Put `DryRun=1` in that folder's `settings.ini` so it never changes power settings or hibernates. Then run `BatteryGuard.exe --data C:\Temp\bgtest --show` to see it.
 
-**Scenario tests:** `powershell -ExecutionPolicy Bypass -File .\tests\run-tests.ps1` runs the real service code against a simulated laptop battery, charger and clock, fast-forwarded. It covers 17 situations: a new install, chargers that stop early, power cuts, sleep, restarts, updates, upgrades from older versions, light and heavy use, and switching on while charging from empty. It checks what Battery Guard did in each (69 checks).
-un-tests.ps1` runs the real service code against a simulated laptop battery, charger and clock, fast-forwarded. It covers 17 situations: a new install, chargers that stop early, power cuts, sleep, restarts, updates, upgrades from older versions, light and heavy use, and switching on while charging from empty. It checks what Battery Guard did in each (69 checks).
+**Scenario tests:** `powershell -ExecutionPolicy Bypass -File .\tests\run-tests.ps1` runs the real service code against a simulated laptop battery, charger and clock, fast-forwarded. It covers 30 situations: a new install, chargers that stop early, power cuts, the laptop switching or hibernating itself off, sleep, restarts, updates, upgrades from older versions, light and heavy use, learning the battery, and switching on while charging from empty. It checks what Battery Guard did in each (125 checks).
 
 ## Troubleshooting
 
 | Problem | What to do |
 |---|---|
-| The laptop switched off suddenly | While it's learning the battery (2.1), that's expected: it's how Battery Guard finds the battery's real limit. Plug in and start it; it learns from that run. Outside learning, it learns from the power cut and hibernates earlier next time. |
+| The laptop switched off suddenly | While it's learning the battery, that's expected: it's how Battery Guard finds the battery's real limit. Plug in and start it; it learns from that run. Outside learning, it learns from the power cut and hibernates earlier next time. |
 | *"Windows protected your PC"* | The installer isn't code-signed. Click **More info → Run anyway**. You can check the SHA-256 first ([see Install](#install)). |
 | Tray icon shows "–" or the dashboard says *service isn't running* | Windows restarts it within seconds. If it stays, open `services.msc`, find **Battery Guard** and click Start, or restart the PC. |
 | No tray icon | Click the **^** next to the clock. If it was hidden in Settings, open **Start menu → Battery Guard → Settings → Show the tray icon**. |
@@ -253,6 +254,8 @@ un-tests.ps1` runs the real service code against a simulated laptop battery, cha
 
 ## License
 
-Copyright © 2026 **Dion Fabian**.
+Copyright © 2026 **Dion Fabian**. All rights reserved.
 
-Battery Guard is free software: you can redistribute it and/or modify it under the terms of the [GNU General Public License v3.0](LICENSE). It is distributed in the hope that it will be useful, but **without any warranty**.
+Battery Guard is free to download and use, at home or at work, on any computers you own or manage. It is **not** open source: you may not copy, share, sell, modify or reuse the program or its source code without written permission. To let someone else have it, share the link to this page. It comes **without any warranty**. The full terms are in the [license](LICENSE), which is also installed as `C:\Program Files\BatteryGuard\LICENSE.txt`.
+
+Versions up to 2.1.2 were published under the GNU GPL v3.0, and copies of those versions remain under it. From 2.1.3 on, the [license](LICENSE) applies. The voice clip was made with [Kokoro](https://huggingface.co/hexgrad/Kokoro-82M) (Apache-2.0).

@@ -1,4 +1,4 @@
-// Battery Guard - Copyright (C) 2026 Dion Fabian. Free software under the GNU General Public License v3.0; see LICENSE.
+// Battery Guard - Copyright (C) 2026 Dion Fabian. All rights reserved. See LICENSE.
 // Shared by BatteryGuardCore.exe (the protection service, runs as SYSTEM) and
 // BatteryGuard.exe (the tray app in each user's session). They talk through small files in
 // C:\ProgramData\BatteryGuard. Only the service (and admins) can write there; the tray apps read
@@ -261,6 +261,7 @@ namespace BatteryGuard
         public int LearnSeq, CutoffMv, FullCellMv;
         public string LearnSummary = "";
         public double LearnRunMin = -1;
+        public bool LearnNext;              // "Learn my battery" pressed on battery: learning starts with the next run, after a charge
         public bool Calibrated;
 
         public static Status Load()
@@ -313,6 +314,7 @@ namespace BatteryGuard
             s.LearnSeq = Ini.I(kv, "LearnSeq", 0);
             s.LearnSummary = Ini.S(kv, "LearnSummary", "");
             s.LearnRunMin = Ini.D(kv, "LearnRunMin", -1);
+            s.LearnNext = Ini.I(kv, "LearnNext", 0) == 1;
             s.CutoffMv = Ini.I(kv, "CutoffMv", 0);
             s.FullCellMv = Ini.I(kv, "FullCellMv", 0);
             s.Calibrated = Ini.I(kv, "Calibrated", 1) == 1;
@@ -376,6 +378,7 @@ namespace BatteryGuard
             add("LearnSeq", LearnSeq);
             add("LearnSummary", Ini.OneLine(LearnSummary));
             add("LearnRunMin", LearnRunMin < 0 ? "-1" : ((int)LearnRunMin).ToString(CultureInfo.InvariantCulture));
+            add("LearnNext", LearnNext ? 1 : 0);
             add("CutoffMv", CutoffMv);
             add("FullCellMv", FullCellMv);
             add("Calibrated", Calibrated ? 1 : 0);

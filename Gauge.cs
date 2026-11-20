@@ -1,4 +1,4 @@
-// Battery Guard - Copyright (C) 2026 Dion Fabian. Free software under the GNU General Public License v3.0; see LICENSE.
+// Battery Guard - Copyright (C) 2026 Dion Fabian. All rights reserved. See LICENSE.
 // The learning part. This battery's own gauge is wrong, and while discharging it also reports a
 // frozen power reading, so energy can only be counted while charging. So:
 //  - On battery, the charge is read from the voltage through a learned "minutes of normal use

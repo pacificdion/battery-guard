@@ -1,4 +1,4 @@
-// Battery Guard - Copyright (C) 2026 Dion Fabian. Free software under the GNU General Public License v3.0; see LICENSE.
+// Battery Guard - Copyright (C) 2026 Dion Fabian. All rights reserved. See LICENSE.
 // Build tool: draws the Battery Guard logo (Theme.DrawLogo in UI.cs) at the sizes Windows uses
 // and writes two icon files:
 //   app.ico        16-256 px, the programs' file icons (Explorer, Start menu, installer)

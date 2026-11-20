@@ -1,4 +1,4 @@
-# Battery Guard - Copyright (C) 2026 Dion Fabian. Free software under the GNU General Public License v3.0; see LICENSE.
+# Battery Guard - Copyright (C) 2026 Dion Fabian. All rights reserved. See LICENSE.
 # Builds and runs the scenario tests (the real service code against a simulated battery).
 $ErrorActionPreference = 'Stop'
 $src = Split-Path $PSScriptRoot

@@ -1,4 +1,4 @@
-// Battery Guard - Copyright (C) 2026 Dion Fabian. Free software under the GNU General Public License v3.0; see LICENSE.
+// Battery Guard - Copyright (C) 2026 Dion Fabian. All rights reserved. See LICENSE.
 // BatteryGuard.exe - the tray app. One runs in each user's session (the core service starts
 // it). It shows the real battery level, the warnings and the countdown, and a small dashboard
 // with the details and settings. All decisions are made by BatteryGuardCore.exe.
@@ -94,6 +94,22 @@ namespace BatteryGuard
             set { Set("VoiceChargeStop", value ? 1 : 0); }
         }
 
+        // Battery saver's own "turn on automatically at" level, kept while the power flyout has it
+        // at 100% to switch Battery saver on (-1 = not changed).
+        public static int SaverLevel
+        {
+            get { return Get("SaverLevel", -1); }
+            set { Set("SaverLevel", value); }
+        }
+
+        // The last learning result (LearnSeq) this user has been shown, so a result that arrived
+        // while the tray app wasn't running (an update, a restart) is still announced once.
+        public static int SeenLearnSeq
+        {
+            get { return Get("SeenLearnSeq", -1); }
+            set { Set("SeenLearnSeq", value); }
+        }
+
         // Where the small countdown timer was last left (-1, -1 = not yet).
         public static Point MiniPosition
         {
@@ -102,29 +118,27 @@ namespace BatteryGuard
         }
     }
 
-    // Spoken alerts (only those the user switched on).
+    // The spoken alert (only if the user switched it on): a short, natural female voice saying
+    // "Charging stopped early.", recorded into the app (made with Kokoro, an open-source voice,
+    // Apache-2.0). Played by Windows itself, so nothing heavy is loaded.
     static class Voice
     {
-        static System.Speech.Synthesis.SpeechSynthesizer speaking;
+        static System.Media.SoundPlayer player;
 
-        public static void Say(string text)
+        public static void ChargingStopped()
         {
             try
             {
-                if (speaking != null) { speaking.SpeakAsyncCancelAll(); speaking.Dispose(); }
-                var synth = new System.Speech.Synthesis.SpeechSynthesizer();
-                try { synth.SelectVoiceByHints(System.Speech.Synthesis.VoiceGender.Female); }
-                catch { }
-                synth.SetOutputToDefaultAudioDevice();
-                synth.SpeakCompleted += delegate
+                if (player == null)
                 {
-                    if (speaking == synth) speaking = null;
-                    synth.Dispose();
-                };
-                speaking = synth;
-                synth.SpeakAsync(text);
+                    Stream clip = System.Reflection.Assembly.GetEntryAssembly().GetManifestResourceStream("charging-stopped.wav");
+                    if (clip == null) return;
+                    player = new System.Media.SoundPlayer(clip);
+                    player.Load();
+                }
+                player.Play(); // in the background
             }
-            catch (Exception ex) { Log.Write("Couldn't speak (" + Environment.UserName + "): " + ex.Message); }
+            catch (Exception ex) { Log.Write("Couldn't play the voice alert (" + Environment.UserName + "): " + ex.Message); }
         }
     }
 
@@ -145,6 +159,7 @@ namespace BatteryGuard
         NoticeForm notice;
         MainForm main;
         HistoryForm history;
+        PowerFlyout flyout;
         string iconKey;
         Icon icon;
 
@@ -157,7 +172,7 @@ namespace BatteryGuard
             menu.Items.Add("Open Battery Guard", null, delegate { ShowMain(); });
             menu.Items.Add("Hide this icon", null, delegate { SetTrayVisible(false); });
             tray = new NotifyIcon { ContextMenuStrip = menu, Text = "Battery Guard", Visible = UserPrefs.ShowTray };
-            tray.MouseClick += delegate(object s, MouseEventArgs e) { if (e.Button == MouseButtons.Left) ShowMain(); };
+            tray.MouseClick += delegate(object s, MouseEventArgs e) { if (e.Button == MouseButtons.Left) ToggleFlyout(); };
 
             ThreadPool.RegisterWaitForSingleObject(showEvent, delegate { invoker.BeginInvoke((MethodInvoker)ShowMain); }, null, -1, false);
 
@@ -228,11 +243,7 @@ namespace BatteryGuard
             if (!stale)
             {
                 if (seenChargeState == "Charging" && status.OnAC && status.ChargeState == "NotCharging" && status.Percent >= 0 && status.Percent < 90 && UserPrefs.VoiceChargeStop)
-                {
-                    string when = status.StopsEarly && status.ReadyAtUtc > DateTime.UtcNow
-                        ? " The next full charge is possible after " + status.ReadyAtUtc.ToLocalTime().ToString("h:mm tt", CultureInfo.InvariantCulture) + "." : "";
-                    Voice.Say(string.Format(CultureInfo.InvariantCulture, "Charging stopped early, at {0:0} percent.{1}", status.Percent, when));
-                }
+                    Voice.ChargingStopped();
                 seenChargeState = status.ChargeState;
             }
 
@@ -240,6 +251,7 @@ namespace BatteryGuard
             HandlePhase();
             bool open = main != null && main.Visible;
             if (open) main.ShowStatus(status, stale);
+            if (flyout != null && flyout.Showing) flyout.SetStatus(status, stale);
             // With the watcher, the timer only keeps "x min ago" texts fresh and spots a stopped
             // service; without it (it couldn't start), poll like before.
             int interval = countdown != null ? 1000 : watcher == null ? (open ? 2000 : 5000) : open ? 10000 : 30000;
@@ -273,9 +285,10 @@ namespace BatteryGuard
             // lost behind it; shown again at each sign-in while a step is waiting).
             if (status.LearnSeq != shownLearnSeq && status.Phase == "Normal")
             {
-                bool firstLook = shownLearnSeq == -1;
                 shownLearnSeq = status.LearnSeq;
-                string[] note = LearnNotice(status, firstLook);
+                bool unseen = status.LearnSeq != UserPrefs.SeenLearnSeq;
+                UserPrefs.SeenLearnSeq = status.LearnSeq;
+                string[] note = LearnNotice(status, unseen);
                 if (note != null) ShowNotice(note[0], note[1], Theme.Blue, 1800);
             }
             if (status.Phase == "Warning" && status.WarningSeq != shownWarningSeq && status.Learn.Length > 0)
@@ -309,13 +322,19 @@ namespace BatteryGuard
         }
 
         // Title and text for the current learning step, or null.
-        static string[] LearnNotice(Status s, bool firstLook)
+        // While learning: at every sign-in. A finished result: once per user, also when it arrived
+        // while the tray app wasn't running (so learning never ends without a word).
+        static string[] LearnNotice(Status s, bool unseen)
         {
             if (s.Learn.Length > 0)
                 return new[] { "Battery Guard is learning this battery",
                     "Until this battery has run all the way down once, Battery Guard won't hibernate: when the battery gives out, the laptop will switch itself off. That's how it learns how low this battery can really go. Save your work often until then. Nothing else to do - use and charge it as usual." };
-            if (!firstLook && s.LearnSummary.Length > 0)
-                return new[] { "Battery learned", s.LearnSummary };
+            if (s.LearnNext)
+                return unseen ? new[] { "Learning starts with the next run",
+                    "This run on battery is protected as usual. Learning starts when you plug in: from the next time you unplug, Battery Guard won't hibernate until the battery gives out, so it learns exactly where that is. Save your work often during that run." } : null;
+            if (unseen && s.LearnSummary.Length > 0)
+                return new[] { "Learning complete - normal protection is back",
+                    s.LearnSummary + " From now on it hibernates there instead of letting the battery run out. To learn it again (best from a full charge), open Settings and choose Learn my battery." };
             return null;
         }
         void CloseCountdown()
@@ -334,6 +353,15 @@ namespace BatteryGuard
             notice = new NoticeForm(title, text, accent, seconds);
             notice.FormClosed += delegate { Memory.Trim(); };
             notice.Show();
+        }
+
+        // The tray icon's flyout: battery level and Windows' power mode. Made once, then reused.
+        void ToggleFlyout()
+        {
+            if (flyout == null || flyout.IsDisposed) flyout = new PowerFlyout(ShowMain);
+            if (flyout.Showing) { flyout.HideFlyout(); return; }
+            if (flyout.JustClosed) return; // this click is what closed it
+            flyout.Open(status, stale);
         }
 
         void ShowMain()
@@ -1924,6 +1952,10 @@ namespace BatteryGuard
                 string so = s.LearnRunMin >= 0 && !s.OnAC ? " (this run: " + Fmt.Minutes(s.LearnRunMin) + " so far)" : "";
                 rows.Add(new[] { "Learning", "Waiting for the battery to run all the way down once" + so });
             }
+            else if (s.LearnNext)
+                rows.Add(new[] { "Learning", "Starts with the next run: plug in, then unplug" });
+            else if (s.CutoffMv > 0)
+                rows.Add(new[] { "Learned limit", "Gives out at " + Fmt.Volts(s.CutoffMv) + " per cell · hibernates at " + Fmt.Volts(s.FloorPerCellMv) });
             if (!s.OnAC) rows.Add(new[] { "On battery for", Ago(s.OnBatterySinceUtc) });
             else if (s.ChargeState == "Charging")
             {
@@ -2058,7 +2090,7 @@ namespace BatteryGuard
             Controls.Add(new Label { Text = "These apply to every user on this PC.", ForeColor = Theme.Sub, Location = new Point(24, 52), AutoSize = true });
             Controls.Add(new Label
             {
-                Text = Product.Name + " " + Product.Version + "\nby " + Product.Author + " \u00b7 GPL v3", ForeColor = Theme.Sub, Font = Theme.Pt(8.5f, false),
+                Text = Product.Name + " " + Product.Version + "\n\u00a9 2026 " + Product.Author, ForeColor = Theme.Sub, Font = Theme.Pt(8.5f, false),
                 TextAlign = ContentAlignment.TopRight, Location = new Point(240, 24), Size = new Size(178, 34),
             });
 
@@ -2075,10 +2107,10 @@ namespace BatteryGuard
             postpone = Row("Allow one \"+2 min\"", "A single postpone during the countdown", new ToggleSwitch());
             hideWindows = Row("Hide Windows' warnings", "Its low-battery popups are wrong for this battery", new ToggleSwitch());
             showTray = Row("Show the tray icon", "Just for you", new ToggleSwitch());
-            voice = Row("Speak when charging stops early", "A voice tells you - just for you", new ToggleSwitch());
+            voice = Row("Speak when charging stops early", "A voice says \"Charging stopped early\"", new ToggleSwitch());
 
             Status current = Status.Load();
-            bool learning = current != null && current.Learn.Length > 0;
+            bool learning = current != null && (current.Learn.Length > 0 || current.LearnNext);
             var reset = new FlatButton(learning ? "Stop learning" : "Learn my battery", false) { Location = new Point(22, 520), Size = new Size(156, 36) };
             reset.Click += delegate { if (learning) StopLearning(); else LearnBattery(); };
             var cancel = new FlatButton("Cancel", false) { Location = new Point(206, 520), Size = new Size(100, 36) };
@@ -2171,19 +2203,21 @@ namespace BatteryGuard
                 return;
             }
             agent.SetTrayVisible(showTray.Checked);
-            if (voice.Checked && !UserPrefs.VoiceChargeStop) Voice.Say("Voice alerts are on. I'll tell you when charging stops early.");
+            if (voice.Checked && !UserPrefs.VoiceChargeStop) Voice.ChargingStopped(); // a preview of what it sounds like
             UserPrefs.VoiceChargeStop = voice.Checked;
             Close();
         }
 
-        // Learns the battery's true limit: charge, run on battery until it switches itself
-        // off, charge again.
+        // Learns the battery's true limit from the next run on battery (never from an earlier one).
         void LearnBattery()
         {
-            const string text =
-                "Battery Guard will learn this battery again: how long it really lasts and where it really gives out.\n\n" +
-                "Until the battery has run all the way down once, Battery Guard won't hibernate. When the battery gives out, the laptop will switch itself off - suddenly, so save your work often until then. It warns you when the end is near.\n\n" +
-                "Nothing else to do: use and charge the laptop as usual. Plugging in just pauses the run.\n\n" +
+            bool onBattery = SystemInformation.PowerStatus.PowerLineStatus == PowerLineStatus.Offline;
+            string start = onBattery
+                ? "It learns from the next run on battery, not this one: this run is protected as usual. Learning starts when you plug in, and the run after you unplug again is the one it learns from (best from a full charge).\n\n"
+                : "It learns from the next run on battery: the next time you unplug (best from a full charge).\n\n";
+            string text =
+                "Battery Guard will learn this battery again: how long it really lasts and where it really gives out.\n\n" + start +
+                "During that run Battery Guard won't hibernate. When the battery gives out, the laptop will switch itself off - suddenly, so save your work often. It warns you when the end is near.\n\n" +
                 "Afterwards it hibernates a few minutes before the point where this battery gives out, so you get nearly all of it.\n\nStart learning?";
             if (MessageBox.Show(this, text, "Learn my battery", MessageBoxButtons.YesNo, MessageBoxIcon.Information) != DialogResult.Yes) return;
             try

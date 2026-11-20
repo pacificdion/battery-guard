@@ -1,5 +1,26 @@
 # Changelog
 
+## 2.1.3 — 2026-11-20
+
+The first stable release since 2.0. It brings battery learning (tested in the 2.1 alpha builds below) to everyone, plus the changes listed here.
+
+- **New license.** Battery Guard is now **copyrighted, all rights reserved**, instead of GPL-3.0. It stays free to download and use, at home or at work, but the program and its source code may not be copied, shared, sold, modified or reused without written permission. See [LICENSE](LICENSE), which is also installed as `LICENSE.txt` next to the programs. Versions up to 2.1.2 remain under the GPL-3.0.
+- **Updating from 2.0** keeps your protection and settings as they are. To learn the battery's real range, choose **Settings → Learn my battery**. New installs learn it on their own.
+- **Power mode flyout.** Clicking the tray icon opens a small panel above the taskbar, like Windows' own battery flyout. It shows the real charge, the time left (or time to full) and what Battery Guard is doing. It also has Windows' **power mode** slider: Battery saver (on battery only), Better battery, Better performance and Best performance.
+  - Drag or click the slider, or use the arrow keys; Esc or a click elsewhere closes it.
+  - It follows the taskbar's light/dark setting and uses your Windows accent colour.
+  - It's drawn in a single window, so it opens in about a tenth of a second and redraws in about 2 ms.
+  - Battery saver is switched through its own "turn on automatically at" level, and your previous level is put back afterwards.
+  - On a plan other than Balanced (where Windows has no power modes) it offers to switch to Balanced.
+  - The dashboard opens from the flyout's *Battery Guard* button or the right-click menu.
+- **New voice.** "Charging stopped early." is now a short, natural female voice (a built-in clip made with the open-source Kokoro voice, Apache-2.0) instead of Windows' robotic one. The tray app no longer loads Windows' speech engine.
+- **Learn my battery learns from the next run, never an earlier one.**
+  - Pressed while plugged in: the next time you unplug starts the learning run.
+  - Pressed on battery: that run is protected as usual; learning starts at the next plug-in, and the run after that is the one learned.
+  - Stop learning cancels it either way.
+- **Fixed: learning could finish without a word.** 2.1.2 could finish learning at start-up from an earlier run, and the "learning complete" notice was skipped when the tray app had just restarted. Every new result is now announced once per user. It also says which run it came from, and the dashboard shows the learned limit (where the battery gives out, and where it now hibernates).
+- The look-back over the battery log (for learning carried over from older versions) only uses a run that began after learning did.
+
 ## 2.1.2 alpha — 2026-11-20 (test build 3)
 
 - **Fixed: learning didn't finish when the battery ran out.** It kept asking for a run down to empty although one had just happened. Now whatever ends a learning run near empty finishes the learning, and the **lowest voltage logged at the end of the run** becomes the new low limit:

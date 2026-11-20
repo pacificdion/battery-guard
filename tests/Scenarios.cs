@@ -1,4 +1,4 @@
-// Battery Guard - Copyright (C) 2026 Dion Fabian. Free software under the GNU General Public License v3.0; see LICENSE.
+// Battery Guard - Copyright (C) 2026 Dion Fabian. All rights reserved. See LICENSE.
 // Scenario tests. They run the real service code (Core and FuelGauge) against a simulated laptop
 // battery and charger, with the clock fast-forwarded, through the situations a laptop goes
 // through: new installs, chargers that stop early, power cuts, sleep, restarts, upgrades.
@@ -287,8 +287,11 @@ namespace BatteryGuard.Tests
             report.AppendLine((ok ? "  PASS  " : "  FAIL  ") + what);
         }
 
+        static string[] only; // scenario numbers given on the command line: run just those
+
         static void Scenario(string name, Action body)
         {
+            if (only != null && !Array.Exists(only, n => name.StartsWith(n + ".", StringComparison.Ordinal))) return;
             current = name;
             report.AppendLine();
             report.AppendLine(name);
@@ -304,8 +307,9 @@ namespace BatteryGuard.Tests
 
         static string Mv(double mv) { return (mv / 1000).ToString("0.000", CultureInfo.InvariantCulture) + " V"; }
 
-        static int Main()
+        static int Main(string[] args)
         {
+            if (args.Length > 0) only = args;
             // Charge fully, unplug, use it until the battery gives out, start it on the charger.
             Scenario("1. New PC, normal charger: learns on its own from the first run-down", delegate
             {
@@ -741,6 +745,7 @@ namespace BatteryGuard.Tests
                 pc.Boot(true);
                 Check(!pc.Learning, "learning complete at the first start-up of the new version");
                 Check(pc.LogText.Contains("Found a finished learning run in the battery log"), "found the run in the battery log");
+                Check(pc.Val("state.ini", "LearnSummary").StartsWith("Learned from the run on"), "the summary says which run it learned from");
                 int cut = int.Parse(pc.Val("state.ini", "CutoffMv"));
                 Check(Math.Abs(cut - pc.Battery.CutoffCellMv) < 60, "true limit learned: " + Mv(cut));
                 Check(pc.Val("gauge.ini", "Calibrated") == "1", "runtime curve learned from it");
@@ -773,6 +778,79 @@ namespace BatteryGuard.Tests
                 Check(pc.Learning, "still learning");
                 pc.RestartService();
                 Check(pc.Learning, "still learning after the update too");
+            });
+
+            // Learn my battery on a PC that has learned before: the old run that ended in a power
+            // cut is in the battery log, but it mustn't end the new learning.
+            Scenario("28. Learn my battery again, then a restart before any new run: keeps learning, no hibernation", delegate
+            {
+                var pc = new Laptop("s28");
+                pc.Battery.EnergyWh = 34;
+                pc.Boot(false);
+                pc.Use(400);
+                pc.PowerCutThenBoot(10, true);
+                Check(!pc.Learning, "first learning done");
+                pc.Use(150);
+                pc.Command("learn");
+                Check(pc.Learning, "learning again");
+                pc.ShutdownThenBoot(5);
+                Check(pc.Learning, "still learning after a restart (the old run isn't reused)");
+                pc.Unplug();
+                pc.Use(600);
+                Check(pc.Battery.Dead && pc.Hibernations == 0, "no hibernation: the run went until the battery gave out (" + Mv(pc.Battery.CellMv) + ")");
+                pc.PowerCutThenBoot(10, true);
+                Check(!pc.Learning, "learned from the new run");
+            });
+
+            // The case reported on the developer's laptop: "Learn my battery" pressed part-way through
+            // a run. That run mustn't be the one learned from: the next one, after a charge, is.
+            Scenario("29. Learn my battery pressed on battery: this run protected, the next run after a charge is learned", delegate
+            {
+                var pc = new Laptop("s29");
+                pc.Battery.EnergyWh = 34;
+                pc.Boot(false);
+                pc.Use(400);
+                pc.PowerCutThenBoot(10, true);
+                Check(!pc.Learning, "first learning done");
+                int firstCut = int.Parse(pc.Val("state.ini", "CutoffMv"));
+                pc.Use(150);
+                pc.Unplug();
+                pc.Use(90);
+                pc.Command("learn");
+                Check(!pc.Learning && pc.Val("state.ini", "LearnNext") == "1", "waiting for the next run (not learning this one)");
+                Check(pc.Val("status.ini", "LearnNext") == "1", "the tray app is told so");
+                pc.Battery.CutoffCellMv = 3150;
+                pc.Use(600);
+                Check(pc.Hibernations == 1 && !pc.Battery.Dead, "this run is protected: it hibernated before the battery gave out");
+                pc.Battery.PlugIn();
+                pc.Resume(20);
+                Check(pc.Learning && pc.Val("state.ini", "LearnNext") == "0", "learning starts when the charger is connected");
+                pc.Use(150);
+                pc.Unplug();
+                pc.Use(600);
+                Check(pc.Battery.Dead && pc.Hibernations == 1, "the next run went until the battery gave out (" + Mv(pc.Battery.CellMv) + "), no hibernation");
+                pc.PowerCutThenBoot(10, true);
+                Check(!pc.Learning, "learned from that run");
+                int cut = int.Parse(pc.Val("state.ini", "CutoffMv"));
+                Check(cut < firstCut - 50 && Math.Abs(cut - 3150) < 60, "new limit from the new run: " + Mv(firstCut) + " -> " + Mv(cut));
+            });
+
+            Scenario("30. Learn my battery pressed on battery, then cancelled", delegate
+            {
+                var pc = new Laptop("s30");
+                pc.Battery.EnergyWh = 34;
+                pc.Boot(false);
+                pc.Use(400);
+                pc.PowerCutThenBoot(10, true);
+                pc.Use(150);
+                pc.Unplug();
+                pc.Use(30);
+                pc.Command("learn");
+                pc.Command("learnstop");
+                Check(pc.Val("state.ini", "LearnNext") == "0" && !pc.Learning, "cancelled");
+                pc.PlugIn();
+                pc.Use(5);
+                Check(!pc.Learning, "plugging in doesn't start it any more");
             });
 
             Console.WriteLine(report.ToString());

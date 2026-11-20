@@ -1,4 +1,4 @@
-// Battery Guard - Copyright (C) 2026 Dion Fabian. Free software under the GNU General Public License v3.0; see LICENSE.
+// Battery Guard - Copyright (C) 2026 Dion Fabian. All rights reserved. See LICENSE.
 // BatteryGuardCore.exe - the protection service. Runs as a Windows service (SYSTEM), so it
 // protects the laptop for every user, on the lock screen and with nobody logged in. (Not a
 // scheduled task: Task Scheduler holds back background tasks while Battery Saver is on, and
@@ -623,6 +623,7 @@ namespace BatteryGuard
         double learnRunMin = -1, learnPointAccum, chargerIdleMin;
         long learnSinceTicks; // when this learning began (0: before 2.1.2, unknown)
         bool learnWarned;
+        bool learnNext;       // asked for on battery: starts at the next plug-in, so the next run is the one learned
         string LearnRunPath { get { return Path.Combine(Paths.Data, "learn-run.csv"); } }
         bool? profileArmed;
         bool hibernateRequested;
@@ -862,6 +863,12 @@ namespace BatteryGuard
                 FinishTrueLimit(lastBatteryCellMv);
             }
             if (!onAC && rawMv > 0 && cells > 0) lastBatteryCellMv = rawMv / cells;
+            if (learnNext && onAC)
+            {
+                // "Learn my battery" was pressed on battery: from now on, the next run is the one.
+                learnNext = false;
+                StartLearning();
+            }
 
             bool acChanged = lastOnAC.HasValue && lastOnAC != onAC;
             if (lastOnAC != onAC)
@@ -1270,8 +1277,18 @@ namespace BatteryGuard
                     countdownEndUtc = countdownEndUtc.AddMinutes(2);
                     Event("Countdown postponed by 2 minutes.");
                 }
-                else if (cmd == "learn") StartLearning();
-                else if (cmd == "learnstop") StopLearning();
+                else if (cmd == "learn") LearnNextRun();
+                else if (cmd == "learnstop")
+                {
+                    if (learnNext)
+                    {
+                        learnNext = false;
+                        learnSeq++;
+                        Event("Learning cancelled before it started.");
+                        SaveState();
+                    }
+                    StopLearning();
+                }
                 else if (cmd == "resetlearned")
                 {
                     learnedFloorMv = 0;
@@ -1487,6 +1504,24 @@ namespace BatteryGuard
             SaveGauge();
         }
 
+        // "Learn my battery": learned from the next run on battery, never from one that was already
+        // going (or from older ones). Asked for while plugged in, the next unplug starts it. Asked
+        // for on battery, this run is protected as usual and learning starts at the next plug-in.
+        void LearnNextRun()
+        {
+            if (lastOnAC == false)
+            {
+                if (learnState != "") StopLearning();
+                learnNext = true;
+                learnSeq++;
+                Event("Learn my battery: it will learn from the next run on battery. This run is protected as usual; learning starts when the charger is connected, and the run after that goes until the battery gives out.");
+                SaveState();
+                return;
+            }
+            learnNext = false;
+            StartLearning();
+        }
+
         void StopLearning()
         {
             if (learnState == "") return;
@@ -1655,10 +1690,16 @@ namespace BatteryGuard
 
         // The stretch on battery that ends at rows[last], one point a minute (voltage per cell,
         // minutes from its start): back until the charger or a gap of more than five minutes.
-        static List<double[]> StretchEndingAt(List<HistoryRow> rows, int last)
+        static int StretchStart(List<HistoryRow> rows, int last)
         {
             int first = last;
             while (first > 0 && !rows[first - 1].OnAC && (rows[first].Time - rows[first - 1].Time).TotalMinutes <= 5) first--;
+            return first;
+        }
+
+        static List<double[]> StretchEndingAt(List<HistoryRow> rows, int last)
+        {
+            int first = StretchStart(rows, last);
             var points = new List<double[]>();
             double lastMin = -1;
             for (int i = first; i <= last; i++)
@@ -1670,6 +1711,28 @@ namespace BatteryGuard
                 lastMin = min;
             }
             return points;
+        }
+
+        // When the current learning began, for learning carried over from a version that didn't
+        // keep it: the last "Learning this battery's real range" line in log.txt (0 if none).
+        long LearningBeganFromLog()
+        {
+            try
+            {
+                string path = Path.Combine(Paths.Data, "log.txt");
+                if (!File.Exists(path)) return 0;
+                string[] lines;
+                using (var r = new StreamReader(new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete))) lines = r.ReadToEnd().Split('\n');
+                for (int i = lines.Length - 1; i >= 0; i--)
+                {
+                    if (lines[i].IndexOf("Learning this battery's real range", StringComparison.Ordinal) < 0) continue;
+                    DateTime t;
+                    if (lines[i].Length >= 19 && DateTime.TryParseExact(lines[i].Substring(0, 19), "yyyy-MM-dd HH:mm:ss", CultureInfo.InvariantCulture, DateTimeStyles.AssumeLocal, out t))
+                        return t.ToUniversalTime().Ticks;
+                }
+            }
+            catch { }
+            return 0;
         }
 
         // The lowest reading per cell in the last ten minutes of the stretch on battery ending at
@@ -1693,6 +1756,7 @@ namespace BatteryGuard
         void LearnFromPastRun()
         {
             List<HistoryRow> rows = ReadHistoryRows();
+            if (learnSinceTicks == 0) learnSinceTicks = LearningBeganFromLog(); // carried over from 2.1.1 or older
             var since = new DateTime(learnSinceTicks, DateTimeKind.Utc);
             for (int i = rows.Count - 1; i >= 0; i--)
             {
@@ -1700,7 +1764,9 @@ namespace BatteryGuard
                 if (r.Time < since) break;
                 DateTime next = i + 1 < rows.Count ? rows[i + 1].Time : Clock.UtcNow;
                 if (r.OnAC || (next - r.Time).TotalMinutes < 3) continue;
-                // A stretch on battery that stopped: the laptop went off or to sleep here.
+                // A stretch on battery that stopped: the laptop went off or to sleep here. Only a
+                // run that began after learning did counts, never one that was already going.
+                if (rows[StretchStart(rows, i)].Time < since) continue;
                 int cellMv = cells > 0 ? r.RawMv / cells : 0;
                 if (cellMv <= 0 || cellMv >= 3750 || r.Phase == "Countdown" || r.Phase == "Hibernating") continue;
                 string how = null;
@@ -1713,6 +1779,12 @@ namespace BatteryGuard
                     how, cellMv / 1000.0, r.Time.ToLocalTime(), points.Count > 0 ? points[points.Count - 1][1] : 0));
                 learnRunMin = -1;
                 FinishTrueLimit(cellMv, points, i);
+                if (learnState == "")
+                {
+                    // Say which run it was: it may have been a while ago.
+                    learnSummary = string.Format(CultureInfo.InvariantCulture, "Learned from the run on {0:d MMM} that ended at {0:HH:mm}, when {1}. ", r.Time.ToLocalTime(), how) + learnSummary;
+                    SaveState();
+                }
                 return;
             }
         }
@@ -2098,6 +2170,7 @@ namespace BatteryGuard
                 LearnSeq = learnSeq,
                 LearnSummary = learnSummary,
                 LearnRunMin = learnRunMin,
+                LearnNext = learnNext,
                 CutoffMv = cutoffMv,
                 FullCellMv = (int)gauge.FullCellMv,
                 Calibrated = gauge.Calibrated,
@@ -2224,6 +2297,7 @@ namespace BatteryGuard
             learnSummary = Ini.S(kv, "LearnSummary", "");
             learnRunMin = Ini.D(kv, "LearnRunMin", -1);
             learnSinceTicks = Ini.L(kv, "LearnSince", 0);
+            learnNext = Ini.I(kv, "LearnNext", 0) == 1;
             learnWarned = Ini.I(kv, "LearnWarned", 0) == 1;
             cutoffMv = Ini.I(kv, "CutoffMv", 0);
             lastBatteryCounter = Ini.I(kv, "LastBatteryCounter", -1);
@@ -2283,6 +2357,7 @@ namespace BatteryGuard
             add("LearnSummary", Ini.OneLine(learnSummary));
             add("LearnRunMin", Ini.F(learnRunMin));
             add("LearnSince", learnSinceTicks);
+            add("LearnNext", learnNext ? 1 : 0);
             add("LearnWarned", learnWarned ? 1 : 0);
             add("CutoffMv", cutoffMv);
             add("CycleSeq", cycleSeq);
