@@ -24,7 +24,7 @@
 </p>
 
 > [!NOTE]
-> **2.1 alpha test build available:** [`BatteryGuard-Setup-2.1.exe`](https://github.com/pacificdion/battery-guard/releases/download/v2.1-alpha/BatteryGuard-Setup-2.1.exe) ([release notes](https://github.com/pacificdion/battery-guard/releases/tag/v2.1-alpha)). It adds [battery learning](#learning-your-battery): one run until the laptop **switches itself off**, to find the battery's real limit. It's for testing; for everyday use, take 2.0 above. Please [report how it goes](https://github.com/pacificdion/battery-guard/issues/new).
+> **2.1.2 alpha test build available:** [`BatteryGuard-Setup-2.1.2.exe`](https://github.com/pacificdion/battery-guard/releases/download/v2.1.2-alpha/BatteryGuard-Setup-2.1.2.exe) ([release notes](https://github.com/pacificdion/battery-guard/releases/tag/v2.1.2-alpha)). It adds [battery learning](#learning-your-battery): the first time the battery runs all the way down, it lets the laptop **switch itself off**, to find the battery's real limit. It's for testing; for everyday use, take 2.0 above. Please [report how it goes](https://github.com/pacificdion/battery-guard/issues/new).
 
 ---
 
@@ -59,7 +59,7 @@ Battery Guard ignores the wrong percentage and watches the **battery's real volt
 
 ## What it does
 
-- *(2.1 alpha)* **Learns your battery's real range first.** On a new PC it runs one learning cycle: charge to 100%, use it on battery until the laptop switches itself off, then charge to 100% again. From that it sets the battery's **maximum voltage** (when full), its **minimum voltage** (where it really gives out), and how long a full charge lasts with your use. See [Learning your battery](#learning-your-battery).
+- *(2.1 alpha)* **Learns your battery's real range, on its own.** On a new PC it doesn't hibernate until the battery has run all the way down once: the laptop switches itself off when the battery gives out. From that run it sets the battery's **minimum voltage** (where it really gives out) and **maximum voltage** (where the charger stops), and how long a full charge lasts with your use. Nothing to do but use and charge it as usual. See [Learning your battery](#learning-your-battery).
 - **Runs until the battery is really empty.** It switches off Windows' early "critical battery" action and decides by the voltage of each cell.
 - **Warns you, then hibernates safely.** A notice comes about 5 minutes before empty, then a 60-second countdown, then the laptop hibernates so your open work is kept. One "+2 min" postpone is allowed, and plugging in cancels it.
 - **Shows the real charge** in the tray as a battery icon with the percentage inside, and in a dashboard with time left, voltage, charge power and what Windows wrongly claims.
@@ -79,7 +79,7 @@ Battery Guard ignores the wrong percentage and watches the **battery's real volt
 
 <img src="docs/images/tray-icons.png" width="560" alt="Tray icon states">
 
-| Installer (2.1 alpha) | Done (2.1 alpha) | A learning notice (2.1 alpha) |
+| Installer (2.1 alpha) | Done (2.1 alpha) | A notice |
 |---|---|---|
 | <img src="docs/images/setup-install.png" width="300" alt="Installer"> | <img src="docs/images/setup-done.png" width="300" alt="Installer finished"> | <img src="docs/images/notice.png" width="300" alt="Notice: plug in the charger now"> |
 
@@ -99,7 +99,7 @@ Tested on a Dell Inspiron 5521 (Windows 10 22H2) with a 3-cell aftermarket batte
 3. Click **Yes** on the administrator (UAC) prompt.
 4. Check the short summary (battery found, hibernation available) and click **Install**. It takes a few seconds.
 5. Click **Open Battery Guard**. From now on its battery icon sits next to the clock for every user. If you can't see it, click the **^** arrow and drag it onto the taskbar.
-6. *(2.1 alpha)* **Let it learn your battery** (once): charge to 100%, unplug and use the laptop as usual until it **switches itself off**, then plug in, start it and charge to 100% again. ⚠️ During that run it does **not** hibernate first, so **save your work often**. It warns you when the end is near. Details: [Learning your battery](#learning-your-battery).
+6. *(2.1 alpha)* **It learns your battery on its own**: until the battery has run all the way down once, it won't hibernate, so the laptop will **switch itself off** when the battery gives out. ⚠️ **Save your work often** until then (it warns you near the end). Details: [Learning your battery](#learning-your-battery).
 
 **Optional: check the download.** In PowerShell, run:
 
@@ -132,21 +132,18 @@ You can also open the dashboard from **Start menu → Battery Guard**.
 
 ## Learning your battery
 
-> New in **2.1**, currently an [alpha test build](https://github.com/pacificdion/battery-guard/releases/tag/v2.1-alpha). 2.0 doesn't have this yet.
+> New in **2.1**, currently an [alpha test build](https://github.com/pacificdion/battery-guard/releases/tag/v2.1.2-alpha). 2.0 doesn't have this yet.
 
-A faulty gauge says nothing useful about where a battery really ends. So Battery Guard measures it, once, on every PC it's installed on, and again whenever you choose **Settings → Learn my battery**:
+A faulty gauge says nothing useful about where a battery really ends. So Battery Guard measures it, **on its own**, on every PC it's installed on (and again if you choose **Settings → Learn my battery**):
 
-| Step | What you do | What it learns |
-|---|---|---|
-| 1 of 3 | Charge to **100%**. | – |
-| 2 of 3 | Unplug and use the laptop as usual **until it switches itself off**. This is a real power cut, not a shutdown or hibernation, so **save your work often**. A notice warns you when the end is near. Plugging in pauses the run. | The **maximum voltage** per cell (just after unplugging when full), how long the battery lasts with your typical use, and the **minimum voltage**, where the battery really gives out. Every minute is written to disk, so nothing is lost when the power goes. |
-| 3 of 3 | Plug in, start the laptop and charge to **100%**. | The battery's real capacity, from the energy that goes in. |
+- **Until the battery has run all the way down once, Battery Guard doesn't hibernate.** When the battery gives out, the laptop **switches itself off**: usually a real power cut. On some laptops the firmware shuts Windows down or hibernates it at that point instead, and that counts too. **Save your work often** until then. A notice warns you when the end is near.
+- Nothing to follow: use and charge the laptop as usual. Every run on battery is recorded a minute at a time, so the power cut loses nothing (and if that record is lost, the run is rebuilt from the battery log). Plugging in just pauses the run; sleeping, restarts and updates don't spoil it.
+- At the next start-up it reads where the battery gave out: the lowest voltage logged at the end of the run. That is its **minimum voltage**, and it learns how long the battery lasted with your typical use.
+- The **maximum voltage** is taken the first time it's unplugged after the charger has finished, at whatever level the charger stops (with a faulty gauge, often short of 100%). The real **capacity** is measured at the next charge.
 
-Afterwards Battery Guard hibernates **just above where this battery really gives out**, leaving enough time for the countdown and for hibernating. The hibernate point is never set below 3.30 V per cell. The percentage and time left are then measured, not estimated. The dashboard shows the current step, and **Settings → Hibernate at** shows the learned limit.
+Afterwards Battery Guard hibernates **just above where this battery really gives out**, leaving enough time for the countdown and for hibernating, and never below 3.30 V per cell. The percentage and time left are then measured, not estimated. **Settings → Hibernate at** shows the learned limit.
 
-**One safety net stays on during the run:** if the battery reaches **3.0 V per cell** (the lowest a lithium cell should ever go) and the laptop still hasn't switched off, Battery Guard hibernates it there and uses that as the limit. Before the battery has been learned, Battery Guard only hibernates when the voltage really reaches the safety limit, never early on an estimate.
-
-Don't leave the battery empty after the learning run; charge it right away. Once is enough. Repeat it only if you change the battery or the readings drift.
+A run that started low (after plugging in briefly near the end, say) still sets the minimum voltage; how long a full charge lasts is then learned from the next long run. A power cut while the battery still had plenty left, a shutdown from the Start menu, or the service restarting doesn't end the learning. Don't leave the battery empty afterwards; plug it in.
 
 ## Settings
 
@@ -155,13 +152,13 @@ Open the dashboard and click **Settings**. These apply to every user on the PC, 
 | Setting | Default | What it means |
 |---|---|---|
 | Battery protection | On | Off gives control back to Windows' own (wrong) battery rules. |
-| Hibernate at | 3.50 V per cell (2.1: learned limit) | In 2.1, set by learning your battery: just above where it really gives out. Or choose *Extra safe* 3.55 V · *Balanced* 3.50 V · *Longest runtime* 3.42 V (until it has learned, it uses 3.50 V). |
+| Hibernate at | 3.50 V per cell (2.1: learned limit) | In 2.1, set by learning your battery: just above where it really gives out. Or choose *Extra safe* 3.55 V · *Balanced* 3.50 V · *Longest runtime* 3.42 V. |
 | Warn me | 5 min | How long before hibernating the warning appears (1–30). |
 | Countdown | 60 s | How long the countdown stays on screen (15–300). |
 | Allow one "+2 min" | On | One postpone during the countdown. |
 | Hide Windows' warnings | On | Windows' low-battery pop-ups are wrong for these batteries. |
 | Show the tray icon | On | Per user. Protection stays on either way. |
-| Learn my battery | – | *(2.1 alpha)* Runs the [learning cycle](#learning-your-battery) again: 100%, then run until it switches itself off, then 100%. While a cycle is running, this button says **Stop learning**. |
+| Learn my battery | – | *(2.1 alpha)* Learns the battery again ([how](#learning-your-battery)): no hibernation until it has run all the way down once more. During learning this button says **Stop learning**. |
 
 If the battery ever cuts out before the safety limit, Battery Guard notices at the next start-up and raises the limit by itself.
 
@@ -226,14 +223,18 @@ The result is `dist\BatteryGuard-Setup-2.1.exe`. The build draws the icon, compi
 | [`AssemblyInfo.cs`](AssemblyInfo.cs) | Version and author |
 | [`tools/MakeIcon.cs`](tools/MakeIcon.cs) | Draws the icon at every size |
 | [`build.ps1`](build.ps1) | The build |
+| [`tests/Scenarios.cs`](tests/Scenarios.cs) | Scenario tests: the real service code against a simulated battery and charger |
 
 **Testing without touching your PC:** run the service in a test folder with `BatteryGuardCore.exe --data C:\Temp\bgtest`. Put `DryRun=1` in that folder's `settings.ini` so it never changes power settings or hibernates. Then run `BatteryGuard.exe --data C:\Temp\bgtest --show` to see it.
+
+**Scenario tests:** `powershell -ExecutionPolicy Bypass -File .\tests\run-tests.ps1` runs the real service code against a simulated laptop battery, charger and clock, fast-forwarded. It covers 17 situations: a new install, chargers that stop early, power cuts, sleep, restarts, updates, upgrades from older versions, light and heavy use, and switching on while charging from empty. It checks what Battery Guard did in each (69 checks).
+un-tests.ps1` runs the real service code against a simulated laptop battery, charger and clock, fast-forwarded. It covers 17 situations: a new install, chargers that stop early, power cuts, sleep, restarts, updates, upgrades from older versions, light and heavy use, and switching on while charging from empty. It checks what Battery Guard did in each (69 checks).
 
 ## Troubleshooting
 
 | Problem | What to do |
 |---|---|
-| The laptop switched off suddenly | During a learning run that's expected. It's how Battery Guard finds the battery's true limit. Plug in, start the laptop and charge to 100%. Outside a learning run, it learns from the power cut and hibernates earlier next time. |
+| The laptop switched off suddenly | While it's learning the battery (2.1), that's expected: it's how Battery Guard finds the battery's real limit. Plug in and start it; it learns from that run. Outside learning, it learns from the power cut and hibernates earlier next time. |
 | *"Windows protected your PC"* | The installer isn't code-signed. Click **More info → Run anyway**. You can check the SHA-256 first ([see Install](#install)). |
 | Tray icon shows "–" or the dashboard says *service isn't running* | Windows restarts it within seconds. If it stays, open `services.msc`, find **Battery Guard** and click Start, or restart the PC. |
 | No tray icon | Click the **^** next to the clock. If it was hidden in Settings, open **Start menu → Battery Guard → Settings → Show the tray icon**. |

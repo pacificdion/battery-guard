@@ -17,6 +17,15 @@ using System.Threading;
 
 namespace BatteryGuard
 {
+    // The time, as the service sees it. Normally the real clock; the scenario tests replace it to
+    // run hours of battery life in seconds.
+    static class Clock
+    {
+        public static Func<DateTime> Source = null;
+        public static DateTime UtcNow { get { return Source != null ? Source() : DateTime.UtcNow; } }
+        public static DateTime Now { get { return UtcNow.ToLocalTime(); } }
+    }
+
     static class Paths
     {
         public static string Data = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.CommonApplicationData), "BatteryGuard");
@@ -542,7 +551,7 @@ namespace BatteryGuard
                 catch { }
                 return;
             }
-            string line = DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss  ", CultureInfo.InvariantCulture) + message + "\r\n";
+            string line = Clock.Now.ToString("yyyy-MM-dd HH:mm:ss  ", CultureInfo.InvariantCulture) + message + "\r\n";
             lock (gate)
             {
                 Archive.Rotate(Paths.Log, 1024 * 1024);

@@ -54,32 +54,77 @@ namespace BatteryGuard
         }
     }
 
+    // Each user's own preferences (HKCU).
     static class UserPrefs
     {
         const string Key = @"Software\BatteryGuard";
 
+        static int Get(string name, int fallback)
+        {
+            try
+            {
+                using (RegistryKey k = Registry.CurrentUser.OpenSubKey(Key))
+                {
+                    object v = k == null ? null : k.GetValue(name);
+                    return v == null ? fallback : Convert.ToInt32(v);
+                }
+            }
+            catch { return fallback; }
+        }
+
+        static void Set(string name, int value)
+        {
+            try
+            {
+                using (RegistryKey k = Registry.CurrentUser.CreateSubKey(Key)) k.SetValue(name, value, RegistryValueKind.DWord);
+            }
+            catch { }
+        }
+
         public static bool ShowTray
         {
-            get
+            get { return Get("ShowTray", 1) != 0; }
+            set { Set("ShowTray", value ? 1 : 0); }
+        }
+
+        // A voice says so when charging stops before the battery is full.
+        public static bool VoiceChargeStop
+        {
+            get { return Get("VoiceChargeStop", 0) != 0; }
+            set { Set("VoiceChargeStop", value ? 1 : 0); }
+        }
+
+        // Where the small countdown timer was last left (-1, -1 = not yet).
+        public static Point MiniPosition
+        {
+            get { return new Point(Get("MiniX", -1), Get("MiniY", -1)); }
+            set { Set("MiniX", value.X); Set("MiniY", value.Y); }
+        }
+    }
+
+    // Spoken alerts (only those the user switched on).
+    static class Voice
+    {
+        static System.Speech.Synthesis.SpeechSynthesizer speaking;
+
+        public static void Say(string text)
+        {
+            try
             {
-                try
-                {
-                    using (RegistryKey k = Registry.CurrentUser.OpenSubKey(Key))
-                    {
-                        object v = k == null ? null : k.GetValue("ShowTray");
-                        return v == null || Convert.ToInt32(v) != 0;
-                    }
-                }
-                catch { return true; }
-            }
-            set
-            {
-                try
-                {
-                    using (RegistryKey k = Registry.CurrentUser.CreateSubKey(Key)) k.SetValue("ShowTray", value ? 1 : 0, RegistryValueKind.DWord);
-                }
+                if (speaking != null) { speaking.SpeakAsyncCancelAll(); speaking.Dispose(); }
+                var synth = new System.Speech.Synthesis.SpeechSynthesizer();
+                try { synth.SelectVoiceByHints(System.Speech.Synthesis.VoiceGender.Female); }
                 catch { }
+                synth.SetOutputToDefaultAudioDevice();
+                synth.SpeakCompleted += delegate
+                {
+                    if (speaking == synth) speaking = null;
+                    synth.Dispose();
+                };
+                speaking = synth;
+                synth.SpeakAsync(text);
             }
+            catch (Exception ex) { Log.Write("Couldn't speak (" + Environment.UserName + "): " + ex.Message); }
         }
     }
 
@@ -94,6 +139,7 @@ namespace BatteryGuard
         bool stale = true;
         int shownWarningSeq = -1, shownCountdownSeq = -1, shownCycleSeq = -1, shownLearnSeq = -1, polls;
         bool lightTaskbar;
+        string seenChargeState;
         string shownTip;
         CountdownForm countdown;
         NoticeForm notice;
@@ -178,6 +224,18 @@ namespace BatteryGuard
             catch { }
             stale = status == null || Math.Abs((DateTime.UtcNow - status.UpdatedUtc).TotalSeconds) > 75;
 
+            // The charger just stopped although the battery isn't full: say so, if wanted.
+            if (!stale)
+            {
+                if (seenChargeState == "Charging" && status.OnAC && status.ChargeState == "NotCharging" && status.Percent >= 0 && status.Percent < 90 && UserPrefs.VoiceChargeStop)
+                {
+                    string when = status.StopsEarly && status.ReadyAtUtc > DateTime.UtcNow
+                        ? " The next full charge is possible after " + status.ReadyAtUtc.ToLocalTime().ToString("h:mm tt", CultureInfo.InvariantCulture) + "." : "";
+                    Voice.Say(string.Format(CultureInfo.InvariantCulture, "Charging stopped early, at {0:0} percent.{1}", status.Percent, when));
+                }
+                seenChargeState = status.ChargeState;
+            }
+
             UpdateTray();
             HandlePhase();
             bool open = main != null && main.Visible;
@@ -220,7 +278,7 @@ namespace BatteryGuard
                 string[] note = LearnNotice(status, firstLook);
                 if (note != null) ShowNotice(note[0], note[1], Theme.Blue, 1800);
             }
-            if (status.Phase == "Warning" && status.WarningSeq != shownWarningSeq && status.Learn == "drain" && status.LearnMode == "cutoff")
+            if (status.Phase == "Warning" && status.WarningSeq != shownWarningSeq && status.Learn.Length > 0)
             {
                 shownWarningSeq = status.WarningSeq;
                 ShowNotice("Save your work now", status.Message + " Plug in if you want to stop learning.", Theme.Orange, 300);
@@ -253,24 +311,13 @@ namespace BatteryGuard
         // Title and text for the current learning step, or null.
         static string[] LearnNotice(Status s, bool firstLook)
         {
-            bool cutoff = s.LearnMode == "cutoff";
-            if (s.Learn == "charge")
-                return new[] { "Learning your battery · step 1 of 3",
-                    cutoff ? "Battery Guard first learns this battery's real range. Charge it to 100%. Then unplug and use the laptop as usual until it switches itself off - suddenly, with no hibernation, so save your work often. Then plug in, start it and charge to 100% again. Its minimum and maximum voltage are set from that."
-                           : "Battery Guard is getting to know this battery. Charge it to 100%, then use the laptop on battery as you normally would until it hibernates, then charge it to 100% again. Until then it only hibernates when the voltage really reaches the safety limit." };
-            if (s.Learn == "drain")
-                return new[] { "Learning your battery · step 2 of 3",
-                    cutoff ? "Fully charged. Unplug and use the laptop as usual until it switches itself off. Battery Guard won't hibernate it, so save your work often; it warns you when the end is near. Plugging in pauses the run."
-                           : "Fully charged. Unplug and use the laptop as you normally would until Battery Guard hibernates it at the safety limit. Your open work is kept." };
-            if (s.Learn == "recharge")
-                return new[] { "Learning your battery · step 3 of 3",
-                    (cutoff && s.CutoffMv > 0 ? string.Format(CultureInfo.InvariantCulture, "The battery gave out at {0:0.00} V per cell - its true limit - so Battery Guard now hibernates at {1:0.00} V. ", s.CutoffMv / 1000.0, s.FloorPerCellMv / 1000.0) : "") +
-                    "Last step: plug in and charge to 100%. Battery Guard learns the battery's capacity from this charge." };
-            if (s.Learn == "" && !firstLook && s.LearnSummary.Length > 0)
+            if (s.Learn.Length > 0)
+                return new[] { "Battery Guard is learning this battery",
+                    "Until this battery has run all the way down once, Battery Guard won't hibernate: when the battery gives out, the laptop will switch itself off. That's how it learns how low this battery can really go. Save your work often until then. Nothing else to do - use and charge it as usual." };
+            if (!firstLook && s.LearnSummary.Length > 0)
                 return new[] { "Battery learned", s.LearnSummary };
             return null;
         }
-
         void CloseCountdown()
         {
             if (countdown == null) return;
@@ -465,8 +512,19 @@ namespace BatteryGuard
 
         protected void PlaceBottomRight()
         {
-            Rectangle wa = Screen.PrimaryScreen.WorkingArea;
+            Rectangle wa = FreeArea();
             Location = new Point(wa.Right - Width - 16, wa.Bottom - Height - 16);
+        }
+
+        // The screen minus the taskbar - also when the taskbar hides itself (Windows then counts
+        // the whole screen as free, and a popup in the corner would sit under it).
+        public static Rectangle FreeArea()
+        {
+            Screen screen = Screen.PrimaryScreen;
+            Rectangle wa = screen.WorkingArea;
+            if (wa != screen.Bounds) return wa;
+            int bar = (int)(48 * Theme.Scale);
+            return new Rectangle(wa.X, wa.Y, wa.Width, wa.Height - bar);
         }
 
         protected FlatButton AddButton(string text, bool primary, int x, int y, int width)
@@ -499,14 +557,16 @@ namespace BatteryGuard
         }
     }
 
-    // Ring countdown before hibernating.
+    // Ring countdown before hibernating. It can be shrunk to a little floating timer.
     class CountdownForm : PopupForm
     {
         readonly Label sub;
-        readonly FlatButton now, later;
+        readonly FlatButton now, later, shrink;
         readonly System.Windows.Forms.Timer tick;
         readonly DateTime openedUtc = DateTime.UtcNow;
         DateTime endUtc;
+        MiniCountdown mini;
+        Status last;
 
         public CountdownForm()
         {
@@ -519,22 +579,44 @@ namespace BatteryGuard
             Controls.Add(sub);
             now = AddButton("Hibernate now", false, 160, 124, 130);
             later = AddButton("+2 min", true, 300, 124, 118);
+            shrink = new FlatButton("\u2013", false) { Location = new Point(398, 12), Size = new Size(30, 26), BackColor = Theme.Card };
+            Controls.Add(shrink);
+            new ToolTip().SetToolTip(shrink, "Shrink to a small timer");
             now.Click += delegate { Send("hibernate"); now.Enabled = later.Enabled = false; };
             later.Click += delegate { Send("postpone"); later.Enabled = false; };
+            shrink.Click += delegate { Shrink(); };
             ResumeLayout(false);
             PlaceBottomRight();
             tick = new System.Windows.Forms.Timer { Interval = 200 };
-            tick.Tick += delegate { Invalidate(new Rectangle(0, 0, (int)(150 * Theme.Scale), Height)); };
+            tick.Tick += delegate { if (Visible) Invalidate(new Rectangle(0, 0, (int)(150 * Theme.Scale), Height)); };
             tick.Start();
-            FormClosed += delegate { tick.Dispose(); };
+            FormClosed += delegate
+            {
+                tick.Dispose();
+                if (mini != null) { mini.Close(); mini.Dispose(); }
+            };
         }
 
         public void SetState(Status s)
         {
+            last = s;
             endUtc = s.CountdownEndUtc;
             later.Visible = s.PostponeAvailable;
             sub.Text = (s.Emergency ? "The battery is critically low. " : "") +
                 "Save your work, or plug in the charger to cancel. Your open apps are kept - it hibernates, it doesn't shut down.";
+            if (mini != null) mini.SetState(s);
+        }
+
+        void Shrink()
+        {
+            if (mini == null)
+            {
+                mini = new MiniCountdown(openedUtc);
+                mini.ExpandRequested += delegate { mini.Hide(); Show(); };
+            }
+            if (last != null) mini.SetState(last);
+            Hide();
+            mini.Show();
         }
 
         protected override void OnPaint(PaintEventArgs e)
@@ -558,13 +640,262 @@ namespace BatteryGuard
             Theme.Draw(g, text, f, Theme.Text, ring.X + (ring.Width - size.Width) / 2, ring.Y + (ring.Height - size.Height) / 2);
         }
 
-        static void Send(string command)
+        public static void Send(string command)
         {
             try { Commands.Send(command); }
             catch (Exception ex) { MessageBox.Show("Battery Guard couldn't send that: " + ex.Message, "Battery Guard"); }
         }
     }
 
+    // The countdown as a little floating pill: a ring with a sleepy moon, the time left, a "+2"
+    // chip and an expand arrow. Drag it anywhere (it remembers where); double-click or the arrow
+    // brings the full window back; right-click for the rest. Drawn with real transparency, so the
+    // rounded edges and shadow are smooth.
+    class MiniCountdown : Form
+    {
+        [StructLayout(LayoutKind.Sequential)] struct POINT { public int X, Y; }
+        [StructLayout(LayoutKind.Sequential)] struct SIZE { public int W, H; }
+        [StructLayout(LayoutKind.Sequential, Pack = 1)] struct BLENDFUNCTION { public byte Op, Flags, Alpha, Format; }
+
+        [DllImport("user32.dll")] static extern bool UpdateLayeredWindow(IntPtr hwnd, IntPtr dst, ref POINT dstPos, ref SIZE size, IntPtr src, ref POINT srcPos, int key, ref BLENDFUNCTION blend, int flags);
+        [DllImport("user32.dll")] static extern IntPtr GetDC(IntPtr hwnd);
+        [DllImport("user32.dll")] static extern int ReleaseDC(IntPtr hwnd, IntPtr dc);
+        [DllImport("gdi32.dll")] static extern IntPtr CreateCompatibleDC(IntPtr dc);
+        [DllImport("gdi32.dll")] static extern bool DeleteDC(IntPtr dc);
+        [DllImport("gdi32.dll")] static extern IntPtr SelectObject(IntPtr dc, IntPtr obj);
+        [DllImport("gdi32.dll")] static extern bool DeleteObject(IntPtr obj);
+        [DllImport("user32.dll")] static extern bool ReleaseCapture();
+        [DllImport("user32.dll")] static extern IntPtr SendMessage(IntPtr hwnd, int msg, IntPtr wp, IntPtr lp);
+
+        const float W = 224, H = 64, Pad = 12;   // the pill, and room around it for the shadow
+        public event EventHandler ExpandRequested;
+        readonly System.Windows.Forms.Timer tick;
+        readonly DateTime openedUtc;
+        readonly float scale = Theme.Scale;
+        DateTime endUtc;
+        bool postpone, emergency, postponeSent;
+        int hover; // 0 nothing, 1 the +2 chip, 2 the expand arrow
+
+        static readonly Color Moon = Color.FromArgb(255, 196, 70), Coral = Color.FromArgb(255, 99, 99);
+
+        protected override CreateParams CreateParams
+        {
+            get
+            {
+                CreateParams cp = base.CreateParams;
+                cp.ExStyle |= 0x80000 /* LAYERED */ | 0x8 /* TOPMOST */ | 0x80 /* TOOLWINDOW */ | 0x08000000 /* NOACTIVATE */;
+                return cp;
+            }
+        }
+
+        protected override bool ShowWithoutActivation { get { return true; } }
+
+        public MiniCountdown(DateTime opened)
+        {
+            openedUtc = opened;
+            FormBorderStyle = FormBorderStyle.None;
+            ShowInTaskbar = false;
+            StartPosition = FormStartPosition.Manual;
+            Text = "Battery Guard countdown";
+            Size = new Size((int)((W + 2 * Pad) * scale), (int)((H + 2 * Pad) * scale));
+            Rectangle wa = PopupForm.FreeArea();
+            Point saved = UserPrefs.MiniPosition;
+            Location = saved.X >= 0 && Screen.FromPoint(saved).WorkingArea.Contains(new Rectangle(saved, Size))
+                ? saved : new Point(wa.Right - Width - 8, wa.Bottom - Height - 8);
+            tick = new System.Windows.Forms.Timer { Interval = 100 };
+            tick.Tick += delegate { if (Visible) Render(); };
+            tick.Start();
+            var menu = new ContextMenuStrip();
+            menu.Items.Add("Show the full window", null, delegate { Expand(); });
+            menu.Items.Add("+2 min", null, delegate { Postpone(); });
+            menu.Items.Add("Hibernate now", null, delegate { CountdownForm.Send("hibernate"); });
+            menu.Opening += delegate { menu.Items[1].Enabled = postpone && !postponeSent; };
+            ContextMenuStrip = menu;
+            FormClosed += delegate { tick.Dispose(); };
+        }
+
+        public void SetState(Status s)
+        {
+            endUtc = s.CountdownEndUtc;
+            postpone = s.PostponeAvailable;
+            emergency = s.Emergency;
+            if (!postpone) postponeSent = false;
+            if (Visible) Render();
+        }
+
+        protected override void OnShown(EventArgs e)
+        {
+            base.OnShown(e);
+            Render();
+        }
+
+        protected override void OnVisibleChanged(EventArgs e)
+        {
+            base.OnVisibleChanged(e);
+            if (Visible) Render();
+        }
+
+        void Expand()
+        {
+            if (ExpandRequested != null) ExpandRequested(this, EventArgs.Empty);
+        }
+
+        void Postpone()
+        {
+            if (!postpone || postponeSent) return;
+            postponeSent = true;
+            CountdownForm.Send("postpone");
+            Render();
+        }
+
+        // Where things are, in the pill's own units.
+        RectangleF Chip { get { return new RectangleF(Pad + W - 76, Pad + 18, 40, 28); } }
+        RectangleF Arrow { get { return new RectangleF(Pad + W - 30, Pad + 21, 22, 22); } }
+
+        int HitTest(Point p)
+        {
+            var q = new PointF(p.X / scale, p.Y / scale);
+            if (postpone && !postponeSent && Chip.Contains(q)) return 1;
+            if (Arrow.Contains(q)) return 2;
+            return 0;
+        }
+
+        protected override void OnMouseMove(MouseEventArgs e)
+        {
+            base.OnMouseMove(e);
+            int h = HitTest(e.Location);
+            Cursor = h != 0 ? Cursors.Hand : Cursors.SizeAll;
+            if (h != hover) { hover = h; Render(); }
+        }
+
+        protected override void OnMouseLeave(EventArgs e)
+        {
+            base.OnMouseLeave(e);
+            if (hover != 0) { hover = 0; Render(); }
+        }
+
+        protected override void OnMouseDown(MouseEventArgs e)
+        {
+            base.OnMouseDown(e);
+            if (e.Button != MouseButtons.Left) return;
+            int h = HitTest(e.Location);
+            if (h == 1) { Postpone(); return; }
+            if (h == 2) { Expand(); return; }
+            if (e.Clicks >= 2) { Expand(); return; }
+            // Anywhere else: drag it around (Windows moves it, like a title bar).
+            ReleaseCapture();
+            SendMessage(Handle, 0xA1 /* WM_NCLBUTTONDOWN */, new IntPtr(2) /* HTCAPTION */, IntPtr.Zero);
+            UserPrefs.MiniPosition = Location;
+            Render();
+        }
+
+        void Render()
+        {
+            if (!IsHandleCreated || Width <= 0) return;
+            using (Bitmap bmp = Snapshot()) Push(bmp);
+        }
+
+        // The pill as a picture with transparency (also used to check its look).
+        public Bitmap Snapshot()
+        {
+            var bmp = new Bitmap(Width, Height, System.Drawing.Imaging.PixelFormat.Format32bppArgb);
+            using (Graphics g = Graphics.FromImage(bmp))
+            {
+                g.Clear(Color.Transparent);
+                g.SmoothingMode = SmoothingMode.AntiAlias;
+                g.TextRenderingHint = TextRenderingHint.AntiAlias;
+                g.ScaleTransform(scale, scale);
+                Draw(g);
+            }
+            return bmp;
+        }
+
+        void Draw(Graphics g)
+        {
+            var pill = new RectangleF(Pad, Pad, W, H);
+            // Soft shadow.
+            for (int i = 6; i >= 1; i--)
+                using (GraphicsPath p = Theme.Rounded(new RectangleF(pill.X - i, pill.Y - i + 3, pill.Width + 2 * i, pill.Height + 2 * i), H / 2 + i))
+                using (var b = new SolidBrush(Color.FromArgb(Theme.Dark ? 16 : 9, 0, 0, 0)))
+                    g.FillPath(b, p);
+            Color top = Theme.Dark ? Color.FromArgb(52, 52, 58) : Color.White, bottom = Theme.Dark ? Color.FromArgb(38, 38, 42) : Color.FromArgb(246, 247, 250);
+            using (GraphicsPath p = Theme.Rounded(pill, H / 2))
+            using (var fill = new LinearGradientBrush(new RectangleF(pill.X, pill.Y - 1, pill.Width, pill.Height + 2), top, bottom, 90f))
+            using (var border = new Pen(Theme.Dark ? Color.FromArgb(70, 70, 78) : Color.FromArgb(226, 228, 234)))
+            {
+                g.FillPath(fill, p);
+                g.DrawPath(border, p);
+            }
+
+            double left = Math.Max(0, (endUtc - DateTime.UtcNow).TotalSeconds);
+            double total = Math.Max(1, (endUtc - openedUtc).TotalSeconds);
+            // The ring, pulsing gently in the last ten seconds.
+            var ring = new RectangleF(pill.X + 10, pill.Y + 10, H - 20, H - 20);
+            int pulse = left < 10 ? (int)(70 + 70 * Math.Sin(Environment.TickCount / 160.0)) : 0;
+            using (var track = new Pen(Theme.Dark ? Color.FromArgb(70, 70, 78) : Color.FromArgb(232, 233, 238), 5)) g.DrawEllipse(track, ring);
+            if (left > 0)
+                using (var arc = new Pen(Color.FromArgb(255 - pulse, emergency ? Theme.Red : Coral), 5) { StartCap = LineCap.Round, EndCap = LineCap.Round })
+                    g.DrawArc(arc, ring, -90, (float)(360 * Math.Min(1, left / total)));
+            // A sleepy little moon, with a "z".
+            var moon = new RectangleF(ring.X + 12, ring.Y + 12, ring.Width - 24, ring.Height - 24);
+            using (var crescent = new GraphicsPath())
+            using (var bitePath = new GraphicsPath())
+            {
+                crescent.AddEllipse(moon);
+                bitePath.AddEllipse(moon.X + moon.Width * 0.38f, moon.Y - moon.Height * 0.18f, moon.Width, moon.Height);
+                using (var bite = new Region(bitePath))
+                using (var shape = new Region(crescent))
+                {
+                    shape.Exclude(bite);
+                    using (var b = new SolidBrush(Moon)) g.FillRegion(b, shape);
+                }
+            }
+            Theme.Draw(g, "z", Theme.Px(8.5f, true), Theme.Dark ? Color.FromArgb(190, 190, 200) : Color.FromArgb(150, 150, 165), moon.Right - 3, moon.Y - 5);
+
+            int sec = (int)Math.Ceiling(left);
+            Theme.Draw(g, string.Format("{0}:{1:00}", sec / 60, sec % 60), Theme.Px(23, true), Theme.Text, pill.X + 64, pill.Y + 9);
+            Theme.Draw(g, emergency ? "battery critical" : "until it hibernates", Theme.Px(10, false), Theme.Sub, pill.X + 66, pill.Y + 40);
+
+            if (postpone)
+            {
+                RectangleF chip = Chip;
+                Color c = postponeSent ? Theme.Gray : hover == 1 ? Theme.Mix(Theme.Blue, Color.White, 0.15) : Theme.Blue;
+                using (GraphicsPath p = Theme.Rounded(chip, chip.Height / 2))
+                using (var b = new SolidBrush(c)) g.FillPath(b, p);
+                Font cf = Theme.Px(12.5f, true);
+                string label = postponeSent ? "\u2713" : "+2";
+                SizeF ts = Theme.Measure(g, label, cf);
+                Theme.Draw(g, label, cf, Color.White, chip.X + (chip.Width - ts.Width) / 2, chip.Y + (chip.Height - ts.Height) / 2 - 0.5f);
+            }
+            // Expand arrow: a small chevron pointing up, in a circle on hover.
+            RectangleF a = Arrow;
+            if (hover == 2)
+                using (var b = new SolidBrush(Theme.Dark ? Color.FromArgb(70, 70, 80) : Color.FromArgb(234, 236, 242))) g.FillEllipse(b, a);
+            using (var pen = new Pen(Theme.Sub, 2f) { StartCap = LineCap.Round, EndCap = LineCap.Round, LineJoin = LineJoin.Round })
+                g.DrawLines(pen, new[] { new PointF(a.X + 6.5f, a.Y + 13.5f), new PointF(a.X + 11, a.Y + 8.5f), new PointF(a.X + 15.5f, a.Y + 13.5f) });
+        }
+
+        // Hands the picture, with its transparency, to Windows.
+        void Push(Bitmap bmp)
+        {
+            IntPtr screen = GetDC(IntPtr.Zero), mem = CreateCompatibleDC(screen), hbmp = bmp.GetHbitmap(Color.FromArgb(0)), old = SelectObject(mem, hbmp);
+            try
+            {
+                var size = new SIZE { W = bmp.Width, H = bmp.Height };
+                var src = new POINT();
+                var dst = new POINT { X = Left, Y = Top };
+                var blend = new BLENDFUNCTION { Op = 0, Flags = 0, Alpha = 255, Format = 1 /* AC_SRC_ALPHA */ };
+                UpdateLayeredWindow(Handle, screen, ref dst, ref size, mem, ref src, 0, ref blend, 2 /* ULW_ALPHA */);
+            }
+            finally
+            {
+                SelectObject(mem, old);
+                DeleteObject(hbmp);
+                DeleteDC(mem);
+                ReleaseDC(IntPtr.Zero, screen);
+            }
+        }
+    }
     // Every reading the charts need, kept compact, plus what happened when (from the event column).
     class ChartData
     {
@@ -1497,8 +1828,8 @@ namespace BatteryGuard
             string pill;
             Color pillColor;
             if (stale || status == null) { pill = "Service stopped"; pillColor = Theme.Red; }
-            else if (status.Protection == "Active" && status.Learn == "drain" && status.LearnMode == "cutoff") { pill = "Learning · no hibernation"; pillColor = Theme.Orange; }
-            else if (status.Protection == "Active") { pill = status.Learn.Length > 0 ? "Protected · learning" : "Protected"; pillColor = Theme.Green; }
+            else if (status.Protection == "Active" && status.Learn.Length > 0) { pill = "Learning \u00b7 no hibernation"; pillColor = Theme.Orange; }
+            else if (status.Protection == "Active") { pill = status.Learn.Length > 0 ? "Protected \u00b7 learning" : "Protected"; pillColor = Theme.Green; }
             else if (status.Protection == "Off") { pill = "Protection off"; pillColor = Theme.Gray; }
             else { pill = "No voltage reading"; pillColor = Theme.Orange; }
             if (status != null && status.DryRun) pill += " \u00b7 test";
@@ -1554,16 +1885,14 @@ namespace BatteryGuard
             string advice;
             Color color;
             string wait = "a full charge is possible after " + Fmt.When(s.ReadyAtUtc);
-            bool trueLimit = s.LearnMode == "cutoff";
             if (s.Phase == "Countdown" || s.Phase == "Hibernating") { advice = "Plug in now to stop it hibernating."; color = Theme.Red; }
-            else if (s.Learn == "drain" && !s.OnAC)
+            else if (s.Learn.Length > 0 && !s.OnAC)
             {
-                advice = trueLimit ? "Learning: keep using it on battery until it switches itself off. Save your work often." : "Learning: keep using it on battery until it hibernates at the safety limit.";
+                advice = s.Phase == "Warning" ? "Learning: the battery is nearly empty and the laptop will switch itself off soon. Save your work now."
+                    : "Learning: it won't hibernate until this battery has run all the way down once. Save your work often.";
                 color = s.Phase == "Warning" ? Theme.Red : Theme.Orange;
             }
-            else if (s.Learn == "drain") { advice = trueLimit ? "Learning: unplug and use it on battery until it switches itself off." : "Learning: unplug and use it on battery until it hibernates."; color = Theme.Blue; }
-            else if (s.Learn == "charge" && s.ChargeState != "Full") { advice = "Learning: first charge it to 100%."; color = Theme.Blue; }
-            else if (s.Learn == "recharge" && s.ChargeState != "Full") { advice = "Learning: last step - charge it to 100%."; color = Theme.Blue; }
+            else if (s.Learn.Length > 0) { advice = "Learning: use and charge it as usual. The first time the battery runs all the way down, the laptop will switch itself off."; color = Theme.Blue; }
             else if (!s.OnAC)
             {
                 if (s.Phase == "Warning") { advice = !s.StopsEarly || s.ReadyForFull ? "Battery low - plug in now." : "Plug in now. This charge will only add about 20% (" + wait + ")."; color = Theme.Orange; }
@@ -1592,11 +1921,8 @@ namespace BatteryGuard
             var rows = new List<string[]>();
             if (s.Learn.Length > 0)
             {
-                bool cutoff = s.LearnMode == "cutoff";
-                string so = s.LearnRunMin >= 0 && !s.OnAC ? " (" + Fmt.Minutes(s.LearnRunMin) + " so far)" : "";
-                rows.Add(new[] { "Learning", s.Learn == "charge" ? "Step 1 of 3: charge to 100%"
-                    : s.Learn == "drain" ? (cutoff ? "Step 2 of 3: use it on battery until it switches itself off" : "Step 2 of 3: use it on battery until it hibernates") + so
-                    : "Step 3 of 3: charge to 100%" });
+                string so = s.LearnRunMin >= 0 && !s.OnAC ? " (this run: " + Fmt.Minutes(s.LearnRunMin) + " so far)" : "";
+                rows.Add(new[] { "Learning", "Waiting for the battery to run all the way down once" + so });
             }
             if (!s.OnAC) rows.Add(new[] { "On battery for", Ago(s.OnBatterySinceUtc) });
             else if (s.ChargeState == "Charging")
@@ -1706,7 +2032,7 @@ namespace BatteryGuard
         static readonly string[] FloorNames = { "Extra safe \u00b7 3.55 V", "Balanced \u00b7 3.50 V", "Longest runtime \u00b7 3.42 V" };
 
         readonly Agent agent;
-        readonly ToggleSwitch enabled, postpone, hideWindows, showTray;
+        readonly ToggleSwitch enabled, postpone, hideWindows, showTray, voice;
         readonly ComboBox floorBox;
         readonly NumericUpDown warnBox, countdownBox;
         int customFloor;
@@ -1726,13 +2052,13 @@ namespace BatteryGuard
             BackColor = Theme.Bg;
             ForeColor = Theme.Text;
             Font = Theme.Pt(9.5f, false);
-            ClientSize = new Size(440, 520);
+            ClientSize = new Size(440, 574);
 
             Controls.Add(new Label { Text = "Settings", Font = Theme.Pt(15, true), ForeColor = Theme.Text, Location = new Point(22, 18), AutoSize = true });
             Controls.Add(new Label { Text = "These apply to every user on this PC.", ForeColor = Theme.Sub, Location = new Point(24, 52), AutoSize = true });
             Controls.Add(new Label
             {
-                Text = Product.Name + " " + Product.Version + "\nby " + Product.Author + " · GPL v3", ForeColor = Theme.Sub, Font = Theme.Pt(8.5f, false),
+                Text = Product.Name + " " + Product.Version + "\nby " + Product.Author + " \u00b7 GPL v3", ForeColor = Theme.Sub, Font = Theme.Pt(8.5f, false),
                 TextAlign = ContentAlignment.TopRight, Location = new Point(240, 24), Size = new Size(178, 34),
             });
 
@@ -1749,14 +2075,15 @@ namespace BatteryGuard
             postpone = Row("Allow one \"+2 min\"", "A single postpone during the countdown", new ToggleSwitch());
             hideWindows = Row("Hide Windows' warnings", "Its low-battery popups are wrong for this battery", new ToggleSwitch());
             showTray = Row("Show the tray icon", "Just for you", new ToggleSwitch());
+            voice = Row("Speak when charging stops early", "A voice tells you - just for you", new ToggleSwitch());
 
             Status current = Status.Load();
             bool learning = current != null && current.Learn.Length > 0;
-            var reset = new FlatButton(learning ? "Stop learning" : "Learn my battery", false) { Location = new Point(22, 466), Size = new Size(156, 36) };
+            var reset = new FlatButton(learning ? "Stop learning" : "Learn my battery", false) { Location = new Point(22, 520), Size = new Size(156, 36) };
             reset.Click += delegate { if (learning) StopLearning(); else LearnBattery(); };
-            var cancel = new FlatButton("Cancel", false) { Location = new Point(206, 466), Size = new Size(100, 36) };
+            var cancel = new FlatButton("Cancel", false) { Location = new Point(206, 520), Size = new Size(100, 36) };
             cancel.Click += delegate { Close(); };
-            var save = new FlatButton("Save", true) { Location = new Point(316, 466), Size = new Size(100, 36) };
+            var save = new FlatButton("Save", true) { Location = new Point(316, 520), Size = new Size(100, 36) };
             save.Click += delegate { Save(); };
             Controls.Add(reset);
             Controls.Add(cancel);
@@ -1818,6 +2145,7 @@ namespace BatteryGuard
             postpone.Checked = s.AllowPostpone == 1;
             hideWindows.Checked = s.HideWindowsWarnings == 1;
             showTray.Checked = UserPrefs.ShowTray;
+            voice.Checked = UserPrefs.VoiceChargeStop;
         }
 
         void Save()
@@ -1843,20 +2171,20 @@ namespace BatteryGuard
                 return;
             }
             agent.SetTrayVisible(showTray.Checked);
+            if (voice.Checked && !UserPrefs.VoiceChargeStop) Voice.Say("Voice alerts are on. I'll tell you when charging stops early.");
+            UserPrefs.VoiceChargeStop = voice.Checked;
             Close();
         }
 
-        // Learns the battery's true limit: charge to 100%, run on battery until it switches itself
-        // off, charge to 100% again.
+        // Learns the battery's true limit: charge, run on battery until it switches itself
+        // off, charge again.
         void LearnBattery()
         {
             const string text =
-                "Battery Guard will learn how long this battery really lasts and where it really gives out:\n\n" +
-                "1.  Charge it to 100%.\n" +
-                "2.  Unplug and use the laptop as usual until it switches itself off. Battery Guard won't hibernate it this time, so save your work often; it warns you when the end is near. (It still steps in if the battery reaches 3.0 V per cell, the lowest a lithium cell should go.)\n" +
-                "3.  Plug in, start the laptop and charge it to 100%.\n\n" +
-                "Afterwards it knows how long a full charge lasts with your use, and hibernates just a few minutes before the point where this battery gives out, so you get nearly all of it.\n\n" +
-                "Once is enough; don't leave the battery empty afterwards. Plugging in pauses the run.\n\nStart learning?";
+                "Battery Guard will learn this battery again: how long it really lasts and where it really gives out.\n\n" +
+                "Until the battery has run all the way down once, Battery Guard won't hibernate. When the battery gives out, the laptop will switch itself off - suddenly, so save your work often until then. It warns you when the end is near.\n\n" +
+                "Nothing else to do: use and charge the laptop as usual. Plugging in just pauses the run.\n\n" +
+                "Afterwards it hibernates a few minutes before the point where this battery gives out, so you get nearly all of it.\n\nStart learning?";
             if (MessageBox.Show(this, text, "Learn my battery", MessageBoxButtons.YesNo, MessageBoxIcon.Information) != DialogResult.Yes) return;
             try
             {

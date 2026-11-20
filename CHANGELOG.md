@@ -1,5 +1,30 @@
 # Changelog
 
+## 2.1.2 alpha — 2026-11-20 (test build 3)
+
+- **Fixed: learning didn't finish when the battery ran out.** It kept asking for a run down to empty although one had just happened. Now whatever ends a learning run near empty finishes the learning, and the **lowest voltage logged at the end of the run** becomes the new low limit:
+  - a sudden power cut (as before);
+  - the laptop **switching itself off** (some firmware shuts Windows down cleanly near empty, so there's no power cut for Windows to record);
+  - the laptop **hibernating itself** and then being switched on while charging.
+  A shutdown from the Start menu, or the service merely restarting, doesn't count.
+- **Fixed: a run that started low was thrown away** ("too short to learn from"), e.g. after plugging in for a few minutes near the end. The limit is now learned from it anyway; how long a full charge lasts is learned from the next long run.
+- If the run's own record is missing, the run is **rebuilt from the battery log**.
+- **Updating mid-learning:** if the battery log already shows a run since learning began that ended with the battery giving out (one 2.1.1 didn't count), it's learned from at the first start-up. No second run-down is needed.
+- **Mini countdown:** the "Hibernating soon" window can be shrunk to a small, cute timer that you can drag anywhere. It keeps the Postpone and Hibernate now buttons.
+- **Voice (optional):** says "Charging stopped early" with the percentage, and when a full charge will be possible. Turn it on in Settings.
+- 27 scenario tests now, adding firmware shutdowns, firmware hibernation, Start-menu shutdowns, service restarts, runs that start low, a lost run record and updating mid-learning.
+
+## 2.1.1 alpha — 2026-11-19 (test build 2)
+
+Fixes from testing 2.1 alpha on a second laptop, plus fully automatic learning.
+
+- **Learning runs on its own.** There are no steps to follow and no "charge to 100%". Until the battery has run all the way down once, Battery Guard doesn't hibernate. Every run on battery is recorded, and whichever one ends with the laptop switching itself off teaches it the battery's real limit.
+- **No safeguard during learning.** There's no hibernation at all until it has learned (the 3.0 V stop is gone), so it finds where the battery itself really gives out.
+- **Maximum voltage** is taken wherever the charger stops. With a faulty gauge that's often short of 100%, which used to block learning.
+- **Fixed: after a run-down, switching on while charging hibernated the laptop again.** Windows' *plugged-in* critical-battery action (often "Hibernate") fired on its wrong ~0% reading. Battery Guard now sets it to do nothing, as on battery. The uninstaller restores Windows' default for both.
+- **Fixed:** with the old steps, a battery whose charger stops early never started its learning run. It was then protected normally, so nothing was learned and the limit stayed at 3.42 V.
+- **New scenario tests** (`tests\run-tests.ps1`): the real service code against a simulated battery and charger, covering 17 situations and 69 checks, all passing.
+
 ## 2.1 alpha — 2026-11-19 (test build)
 
 **Battery Guard now learns each battery's real range.**

@@ -55,6 +55,7 @@ namespace BatteryGuard
         public bool LastRunLearned;            // set by ReachedFloor when that run taught the curve
         public double FullCellMv = 4150;       // per cell, under load just after unplugging a full battery
         public bool FullCellLearned;
+        public bool ChargerFinished;           // set by the service while plugged in and the charger is done
         public double CapacityMwh = 34000;     // energy from the floor to full (charging side)
         public bool CapacityLearned;
         public double CvShare = 18;            // % of capacity added during the final top-up
@@ -127,7 +128,9 @@ namespace BatteryGuard
                 sinceUnplugMin = 0;
                 run.Clear();
                 speedSamples.Clear();
-                runFromFull = !double.IsNaN(percent) && percent >= 97;
+                // As full as it gets: the gauge says so, or the charger had finished (a faulty gauge
+                // often stops it short of 100% - that is this battery's top).
+                runFromFull = (!double.IsNaN(percent) && percent >= 97) || ChargerFinished;
                 fullCellTaken = false;
                 sagFromCellMv = restCellMv;
                 restCellMv = 0;
@@ -151,8 +154,10 @@ namespace BatteryGuard
             if (runFromFull && !fullCellTaken && sinceUnplugMin >= 2 && g.MedianCellMv > 0)
             {
                 fullCellTaken = true;
-                double measured = Clamp(g.MedianCellMv, 3900, 4350);
-                FullCellMv = FullCellLearned && !LearningRun ? FullCellMv + 0.3 * (measured - FullCellMv) : measured;
+                // The highest seen is the top (a charge that stopped earlier than usual doesn't
+                // lower it).
+                double measured = Clamp(g.MedianCellMv, 3700, 4350);
+                FullCellMv = FullCellLearned ? Math.Max(FullCellMv, measured) : measured;
                 FullCellLearned = true;
             }
 
@@ -339,10 +344,15 @@ namespace BatteryGuard
         // stretched to this run's length, and every voltage it passed through takes the time it
         // actually had left before the end (endMv) - not an average with older runs.
         // Points are { cell mV, awake minute }. Returns the run's length in minutes.
-        double LearnFrom(List<double[]> points, double end, int endMv)
+        double LearnFrom(List<double[]> points, double end, int endMv) { return LearnFrom(points, end, endMv, true); }
+
+        // wholeRun false: only the bottom of the range was covered (a short run). What was measured
+        // is learned, but the rest of the curve isn't stretched to it - its time scale stays an
+        // estimate until a long run comes along.
+        double LearnFrom(List<double[]> points, double end, int endMv, bool wholeRun)
         {
             double pace = (MinutesAt(points[0][0]) - MinutesAt(endMv)) / Math.Max(1, end - points[0][1]);
-            if (pace >= 0.1 && pace <= 20)
+            if (wholeRun && pace >= 0.1 && pace <= 20)
                 for (int i = 0; i < Bins; i++) minutes[i] /= pace;
             double anchor = MinutesAt(endMv);
             var sum = new double[Bins];
@@ -382,24 +392,41 @@ namespace BatteryGuard
                 }
             }
             for (int i = 1; i < Bins; i++) minutes[i] = Math.Max(minutes[i], minutes[i - 1]); // more volts never means less time
-            Calibrated = true;
-            LearningRun = false;
+            if (wholeRun)
+            {
+                Calibrated = true;
+                Runs = Math.Max(1, Runs + 1);
+                speed = 1;
+            }
+            LearningRun = !wholeRun; // after a short run, the next long one sets the time scale
             LastRunLearned = true;
-            Runs = Math.Max(1, Runs + 1);
-            speed = 1;
             return end - points[0][1];
         }
 
         // The run that went on until the laptop switched itself off (recorded on disk, since it
         // ended in a power cut). cutMv is the last voltage per cell before it went off.
-        public bool LearnToCutoff(List<double[]> points, double end, int cutMv)
+        // Returns 2 when the whole curve was learned, 1 when only the bottom of it (a run that
+        // started low), 0 when there was nothing to learn the curve from.
+        public int LearnToCutoff(List<double[]> points, double end, int cutMv)
         {
-            if (points.Count < 20 || points[0][0] < 3850 || end - points[0][1] < 20) return false;
-            double length = LearnFrom(points, end, cutMv);
-            Event = string.Format(CultureInfo.InvariantCulture,
-                "Learned this battery's true limit: from {0:0.00} V per cell it ran {1} of typical use before switching off at {2:0.00} V per cell.",
-                points[0][0] / 1000, HoursMinutes(length), cutMv / 1000.0);
-            return true;
+            if (points.Count >= 15 && points[0][0] >= 3700 && end - points[0][1] >= 15)
+            {
+                double length = LearnFrom(points, end, cutMv, true);
+                Event = string.Format(CultureInfo.InvariantCulture,
+                    "Learned this battery's true limit: from {0:0.00} V per cell it ran {1} of typical use before switching off at {2:0.00} V per cell.",
+                    points[0][0] / 1000, HoursMinutes(length), cutMv / 1000.0);
+                return 2;
+            }
+            if (points.Count >= 3 && end - points[0][1] >= 2)
+            {
+                double length = LearnFrom(points, end, cutMv, false);
+                Event = string.Format(CultureInfo.InvariantCulture,
+                    "Learned this battery's true limit from a short run ({0} from {1:0.00} V per cell down to {2:0.00} V): the bottom of its range is measured; its full runtime will be after a longer run.",
+                    HoursMinutes(length), points[0][0] / 1000, cutMv / 1000.0);
+                return 1;
+            }
+            LearningRun = false;
+            return 0;
         }
 
         // The voltage at which there are still `minutesBefore` minutes of typical use before the
@@ -500,7 +527,7 @@ namespace BatteryGuard
             add("CvEntryMw", Ini.F(CvEntryMw));
             add("RestSagMv", Ini.F(RestSagMv));
             add("Percent", double.IsNaN(percent) ? "" : Ini.F(percent));
-            add("SavedUtc", DateTime.UtcNow.Ticks);
+            add("SavedUtc", Clock.UtcNow.Ticks);
             return sb.ToString();
         }
 
@@ -511,7 +538,7 @@ namespace BatteryGuard
             // Earlier versions only ran on the laptop the starting curve was measured on.
             Calibrated = !Fresh && Ini.I(kv, "Calibrated", 1) == 1;
             LearningRun = !Fresh && Ini.I(kv, "LearningRun", 0) == 1;
-            FullCellMv = Fresh ? 4150 : Clamp(Ini.D(kv, "FullCellMv", 4150), 3900, 4350);
+            FullCellMv = Fresh ? 4150 : Clamp(Ini.D(kv, "FullCellMv", 4150), 3700, 4350);
             FullCellLearned = !Fresh && Ini.I(kv, "FullCellLearned", 0) == 1;
             if (version < 2) return; // older format: start from the seed
             double[] m = ParseList(Ini.S(kv, "Minutes", "")), w = ParseList(Ini.S(kv, "Weight", ""));
@@ -529,7 +556,7 @@ namespace BatteryGuard
             RestSagMv = Clamp(Ini.D(kv, "RestSagMv", 40), 5, 200);
             savedUtc = new DateTime(Ini.L(kv, "SavedUtc", 0), DateTimeKind.Utc);
             // A recent save is still good; after longer it's re-measured.
-            if ((DateTime.UtcNow - savedUtc).TotalMinutes < 10) percent = display = Ini.D(kv, "Percent", double.NaN);
+            if ((Clock.UtcNow - savedUtc).TotalMinutes < 10) percent = display = Ini.D(kv, "Percent", double.NaN);
         }
 
         // Mean { x, y } of the points with x in [from, to].

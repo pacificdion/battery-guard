@@ -6,11 +6,11 @@ using System.Runtime.InteropServices;
 
 [assembly: AssemblyCompany("Dion Fabian")]
 [assembly: AssemblyProduct("Battery Guard")]
-[assembly: AssemblyCopyright("Copyright © 2026 Dion Fabian")]
+[assembly: AssemblyCopyright("Copyright \u00a9 2026 Dion Fabian")]
 [assembly: AssemblyTrademark("")]
-[assembly: AssemblyVersion("2.1.0.0")]
-[assembly: AssemblyFileVersion("2.1.0.0")]
-[assembly: AssemblyInformationalVersion("2.1")]
+[assembly: AssemblyVersion("2.1.2.0")]
+[assembly: AssemblyFileVersion("2.1.2.0")]
+[assembly: AssemblyInformationalVersion("2.1.2")]
 [assembly: ComVisible(false)]
 
 namespace BatteryGuard
@@ -18,7 +18,7 @@ namespace BatteryGuard
     static class Product
     {
         public const string Name = "Battery Guard";
-        public const string Version = "2.1";
+        public const string Version = "2.1.2";
         public const string Author = "Dion Fabian";
     }
 }

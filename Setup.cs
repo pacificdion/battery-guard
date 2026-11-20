@@ -405,6 +405,10 @@ namespace BatteryGuard
                     Guid setting = v.Key;
                     PowerWriteDCValueIndex(IntPtr.Zero, ref scheme, ref sub, ref setting, v.Value);
                 }
+                // Plugged in: Windows' default is to do nothing at a critical level.
+                Guid critAction = new Guid("637ea02f-bbcb-4015-8e2c-a1c7b9c0b546"), lowAction = new Guid("d8742dcb-3e6a-4b3c-b3fe-374623cdcf06");
+                PowerWriteACValueIndex(IntPtr.Zero, ref scheme, ref sub, ref critAction, 0);
+                PowerWriteACValueIndex(IntPtr.Zero, ref scheme, ref sub, ref lowAction, 0);
             }
             IntPtr active;
             if (PowerGetActiveScheme(IntPtr.Zero, out active) == 0)
@@ -542,6 +546,9 @@ namespace BatteryGuard
         static extern uint PowerWriteDCValueIndex(IntPtr root, ref Guid scheme, ref Guid sub, ref Guid setting, uint value);
 
         [DllImport("powrprof.dll")]
+        static extern uint PowerWriteACValueIndex(IntPtr root, ref Guid scheme, ref Guid sub, ref Guid setting, uint value);
+
+        [DllImport("powrprof.dll")]
         static extern uint PowerGetActiveScheme(IntPtr root, out IntPtr scheme);
 
         [DllImport("powrprof.dll")]
@@ -677,7 +684,7 @@ namespace BatteryGuard
                    "Shows the real charge, the voltage, and every charge in a clear history.";
             checks.Clear();
             if (learnsFirst)
-                checks.Add(new[] { "warn", "First it learns your battery, once: charge to 100%, then use it on battery until the laptop switches itself off - suddenly, with no hibernation. Save your work often during that run. Then charge to 100% again; its voltage range is set from that." });
+                checks.Add(new[] { "warn", "First it learns this battery, on its own: until the battery has run all the way down once, it won't hibernate - the laptop will switch itself off suddenly when the battery gives out. Save your work often until then. That sets this battery's real voltage range." });
             if (Installer.HasBattery()) checks.Add(new[] { "ok", "Battery found." });
             else checks.Add(new[] { "warn", "No battery found. Battery Guard is for laptops; it will wait until it can see a battery." });
             bool supported;
@@ -729,7 +736,7 @@ namespace BatteryGuard
             {
                 if (learnsFirst)
                 {
-                    checks.Add(new[] { "warn", "Now it learns your battery: charge to 100%, then use it on battery until it switches itself off (save your work often), then charge to 100% again." });
+                    checks.Add(new[] { "warn", "It's learning this battery now: until the battery has run all the way down once, the laptop will switch itself off when it's empty instead of hibernating. Save your work often until then." });
                     checks.Add(new[] { "ok", "From then on it warns before the battery is empty, counts down and hibernates just above where this battery really gives out." });
                 }
                 else

@@ -29,7 +29,8 @@ try {
 
     Compile (@('/target:winexe', "/out:$obj\BatteryGuardCore.exe", "/win32icon:$obj\app-small.ico", '/reference:System.Management.dll', '/reference:System.ServiceProcess.dll') +
         $shared + @('Gauge.cs', 'Core.cs'))
-    Compile (@('/target:winexe', "/out:$obj\BatteryGuard.exe", "/win32icon:$obj\app.ico", "/resource:$obj\app-small.ico,app.ico") +
+    $wpf = Join-Path (Split-Path $csc) 'WPF'   # where System.Speech.dll lives
+    Compile (@('/target:winexe', "/out:$obj\BatteryGuard.exe", "/win32icon:$obj\app.ico", "/resource:$obj\app-small.ico,app.ico", "/lib:$wpf", '/reference:System.Speech.dll') +
         $forms + $shared + @('UI.cs', 'Agent.cs'))
 
     $setup = Join-Path $dist "BatteryGuard-Setup-$version.exe"
